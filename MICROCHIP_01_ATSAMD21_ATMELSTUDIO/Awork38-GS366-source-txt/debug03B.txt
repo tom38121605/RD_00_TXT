@@ -1,0 +1,191 @@
+
+
+#define DATA_LENGTH 2
+static uint8_t write_buffer1[2] = {0x02, 0x06};
+static uint8_t write_buffer2[2] = {0x02, 0x09};
+static uint8_t read_buffer[2]={0};	
+
+-----------------------------------------------------------------
+
+
+typedef union
+ {
+       SercomI2cm                I2CM;      
+       SercomI2cs                I2CS;         
+       SercomSpi                 SPI;        
+       SercomUsart               USART;      
+} Sercom;
+
+-----------
+
+struct i2c_master_module
+ { 
+    Sercom *hw; 
+    volatile bool locked; 
+
+    uint16_t unknown_bus_state_timeout; 
+    uint16_t buffer_timeout; 
+
+    bool send_stop; 
+    bool send_nack; 
+};
+
+----------------
+
+
+    struct i2c_master_packet packet = 
+   {
+        .address     = 0XA0,            //SLAVE_ADDRESS,
+        .data_length = DATA_LENGTH,
+        .data        = write_buffer1,
+        .ten_bit_address = false,
+        .high_speed      = false,
+        .hs_master_code  = 0x0,
+    };
+
+-------------------
+
+
+typedef struct 
+{ 
+  __IO SERCOM_I2CM_CTRLA_Type    CTRLA;              //0x00: (R/W 32) I2CM Control A 
+  __IO SERCOM_I2CM_CTRLB_Type    CTRLB;              //0x04: (R/W 32) I2CM Control B  
+       RoReg8                    Reserved1[0x4];
+  __IO SERCOM_I2CM_BAUD_Type     BAUD;              //0x0C: (R/W 32) I2CM Baud Rate  
+       RoReg8                    Reserved2[0x4];
+  __IO SERCOM_I2CM_INTENCLR_Type INTENCLR;    //0x14: (R/W  8) I2CM Interrupt Enable Clear 
+       RoReg8                    Reserved3[0x1];
+  __IO SERCOM_I2CM_INTENSET_Type INTENSET;     //0x16: (R/W  8) I2CM Interrupt Enable Set  
+       RoReg8                    Reserved4[0x1];
+  __IO SERCOM_I2CM_INTFLAG_Type  INTFLAG;        //0x18: (R/W  8) I2CM Interrupt Flag Status and Clear 
+       RoReg8                    Reserved5[0x1];
+  __IO SERCOM_I2CM_STATUS_Type   STATUS;           //0x1A: (R/W 16) I2CM Status  
+  __I  SERCOM_I2CM_SYNCBUSY_Type SYNCBUSY;     //0x1C: (R/  32) I2CM Synchronization Busy  
+       RoReg8                    Reserved6[0x4];
+  __IO SERCOM_I2CM_ADDR_Type     ADDR;               //0x24: (R/W 32) I2CM Address 
+  __IO SERCOM_I2CM_DATA_Type     DATA;                //0x28: (R/W  8) I2CM Data  
+       RoReg8                    Reserved7[0x7];
+  __IO SERCOM_I2CM_DBGCTRL_Type  DBGCTRL;       //0x30: (R/W  8) I2CM Debug Control  
+} SercomI2cm;
+
+
+-----------------------------------
+
+void  i2c_master_get_config_defaults( config )       //config=config_i2c_master
+{
+ 
+    config->baud_rate        = I2C_MASTER_BAUD_RATE_100KHZ; 
+    config->generator_source = GCLK_GENERATOR_0;
+    config->run_in_standby   = false;
+
+    config->start_hold_time  = I2C_MASTER_START_HOLD_TIME_300NS_600NS;
+    config->buffer_timeout   = 65535;
+    config->unknown_bus_state_timeout = 65535;
+
+    config->pinmux_pad0      = PINMUX_DEFAULT;
+    config->pinmux_pad1      = PINMUX_DEFAULT;
+
+    config->scl_low_timeout  = false;
+    config->inactive_timeout = I2C_MASTER_INACTIVE_TIMEOUT_DISABLED;
+ 
+    config->sda_scl_rise_time_ns = 215;
+}
+
+
+---
+
+enum system_pinmux_pin_dir 
+{
+    SYSTEM_PINMUX_PIN_DIR_INPUT,
+    SYSTEM_PINMUX_PIN_DIR_OUTPUT,
+    SYSTEM_PINMUX_PIN_DIR_OUTPUT_WITH_READBACK,
+};
+
+enum system_pinmux_pin_pull 
+{
+    SYSTEM_PINMUX_PIN_PULL_NONE,
+    SYSTEM_PINMUX_PIN_PULL_UP,
+    SYSTEM_PINMUX_PIN_PULL_DOWN,
+};
+
+struct system_pinmux_config 
+{
+    uint8_t mux_position;
+
+    enum system_pinmux_pin_dir    direction;
+
+    enum system_pinmux_pin_pull   input_pull;
+
+    bool powersave;
+};
+
+--------------
+
+#define MREPEAT(count, macro, data)    TPASTE2(MREPEAT, count) (macro, data)
+#define TPASTE2( a, b)                            a##b
+ 
+MREPEAT(6, macro, data)  ==> MREPEAT6 (macro, data)
+
+-----------
+
+
+#define _SERCOM_PAD_DEFAULTS_CASE(n, pad)           //n=2,  pad=0   (2个参数具体怎么推导来的，待理解，先跳过)
+        case (uintptr_t)SERCOM##n: 
+            switch (pad) { 
+                case 0: 
+                    return SERCOM##n##_PAD0_DEFAULT;     //pad0, sda
+                case 1: 
+                    return SERCOM##n##_PAD1_DEFAULT;    //pad1, sck
+                case 2: 
+                    return SERCOM##n##_PAD2_DEFAULT; 
+                case 3: 
+                    return SERCOM##n##_PAD3_DEFAULT; 
+            } 
+
+
+------------------
+
+
+#elif SAM_PART_IS_DEFINED(SAMD21E15L) || SAM_PART_IS_DEFINED(SAMD21E16L)
+
+    /* SERCOM0 */
+    #define SERCOM0_PAD0_DEFAULT      PINMUX_PA04D_SERCOM0_PAD0
+    #define SERCOM0_PAD1_DEFAULT      PINMUX_PA05D_SERCOM0_PAD1
+    #define SERCOM0_PAD2_DEFAULT      PINMUX_PA06D_SERCOM0_PAD2
+    #define SERCOM0_PAD3_DEFAULT      PINMUX_PA07D_SERCOM0_PAD3
+
+    /* SERCOM1 */
+    #define SERCOM1_PAD0_DEFAULT      PINMUX_PA16C_SERCOM1_PAD0
+    #define SERCOM1_PAD1_DEFAULT      PINMUX_PA17C_SERCOM1_PAD1
+    #define SERCOM1_PAD2_DEFAULT      PINMUX_PA18C_SERCOM1_PAD2
+    #define SERCOM1_PAD3_DEFAULT      PINMUX_PA19C_SERCOM1_PAD3
+
+    /* SERCOM2 */
+    #define SERCOM2_PAD0_DEFAULT      PINMUX_PA08D_SERCOM2_PAD0
+    #define SERCOM2_PAD1_DEFAULT      PINMUX_PA09D_SERCOM2_PAD1
+    #define SERCOM2_PAD2_DEFAULT      PINMUX_PA10D_SERCOM2_PAD2
+    #define SERCOM2_PAD3_DEFAULT      PINMUX_PA11D_SERCOM2_PAD3
+
+    /* SERCOM3 */
+    #define SERCOM3_PAD0_DEFAULT      PINMUX_PA22C_SERCOM3_PAD0
+    #define SERCOM3_PAD1_DEFAULT      PINMUX_PA23C_SERCOM3_PAD1
+    #define SERCOM3_PAD2_DEFAULT      PINMUX_PA24C_SERCOM3_PAD2
+    #define SERCOM3_PAD3_DEFAULT      PINMUX_PA25C_SERCOM3_PAD3
+
+
+
+------------
+
+#define SERCOM_I2CM_CTRLB_CMD_Pos   16          
+#define SERCOM_I2CM_CTRLB_CMD_Msk   (0x3ul << SERCOM_I2CM_CTRLB_CMD_Pos)
+#define SERCOM_I2CM_CTRLB_CMD(value) (SERCOM_I2CM_CTRLB_CMD_Msk & ((value) << SERCOM_I2CM_CTRLB_CMD_Pos))
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,204 @@
+ 
+
+
+=================初始化gpio的输入输出方向，上下拉，电源========================
+
+
+flow：
+
+   main -->   port_get_config_defaults --> port_pin_set_config --> system_pinmux_pin_set 
+            -->   _system_pinmux_config
+
+
+--------------------------
+
+
+int main
+
+
+   struct port_config pinconf;
+   
+   //output
+   //port_get_config_defaults(&pinconf);
+        pinconf->direction  = PORT_PIN_DIR_INPUT;
+        pinconf->input_pull = PORT_PIN_PULL_UP;
+        pinconf->powersave  = false;
+
+   pinconf.direction = PORT_PIN_DIR_OUTPUT;
+
+   //led
+   port_pin_set_config(PIN_PB08, &pinconf);
+   port_pin_set_output_level(PIN_PB08, 0);
+ 
+
+
+---------
+
+//初始化gpio的输入输出方向，上下拉，电源 之一
+//参数： PB8, pinconf
+port_pin_set_config(   gpio_pin,   *const config)
+
+    system_pinmux_config  pinmux_config;
+
+
+    pinmux_config.mux_position = SYSTEM_PINMUX_GPIO;     //  (1 << 7)              //引脚功能是普通GPIO
+
+    pinmux_config.direction    = config->direction;   
+    pinmux_config.input_pull   = config->input_pull;  
+    pinmux_config.powersave    = config->powersave;   
+    system_pinmux_pin_set_config(gpio_pin, &pinmux_config);   
+
+---
+
+//初始化gpio的输入输出方向，上下拉，电源 之二
+
+参数1：PB08=40
+参数2:  pinmux_config
+system_pinmux_pin_set_config( gpio_pin, *const config)
+ 
+     PortGroup *port = system_pinmux_get_group_from_gpio_pin(gpio_pin);    //取得端口号，即PA,PB ，对应后面的group[0],group[1]
+                                                                                                                        port=ports[0]->Group[1]   ， 可忽略前面的“port[0]->”
+  
+     pin_mask = (1UL << (gpio_pin % 32));   //pin_mask  = 1<<8;  
+
+    _system_pinmux_config(port, pin_mask, config);
+ 
+
+-----------
+
+说明： WRCONFIG是另一种配置io的方式，优点可同时配置多个IO口  （点评：为了便于理解，用另一种方法直接使用PINCFG来配置更方便）
+
+//初始化gpio的输入输出方向，上下拉，电源 之三
+
+参数1：port=ports[0]->Group[1]    //这里做了简化，易理解
+参数2：pin_mask  = 1<<8;
+参数3:  pinmux_config
+ _system_pinmux_config( PortGroup *port, pin_mask, system_pinmux_config *config)   //group[1], 8, config
+  
+    uint32_t pin_cfg = 0;
+
+    if (!config->powersave) 
+ 
+        //检查是否为普通gpio功能
+        if (config->mux_position != SYSTEM_PINMUX_GPIO)       //如果不是普通gpio引脚，则如下多功能引脚处理  （已理解，可直接跳过）
+            pin_cfg |= PORT_WRCONFIG_PMUXEN;                       //pin_cfg.16=1
+            pin_cfg |= (config->mux_position << 24);                    //pin_cfg.24-27=xx，具体的多功能的功能设置
+      
+
+        //检查是否有input设置 
+        if ((config->direction == SYSTEM_PINMUX_PIN_DIR_INPUT) || (### == SYSTEM_PINMUX_PIN_DIR_OUTPUT_WITH_READBACK))  //如果dir是输入或双向
+
+            pin_cfg |= PORT_WRCONFIG_INEN;       //pin_cfg.17=1   //置输入标志
+
+            if (config->input_pull != SYSTEM_PINMUX_PIN_PULL_NONE)    //如果有上下拉
+                pin_cfg |= PORT_WRCONFIG_PULLEN;       //pin_cfg.18=1     //置上下拉标志
+
+            port->DIRCLR.reg = pin_mask;     //DIRCLR.8=0   //PB8设置为输入
+     
+
+         //检查是否有output设置 
+        if (config->direction == SYSTEM_PINMUX_PIN_DIR_OUTPUT ||   ### == SYSTEM_PINMUX_PIN_DIR_OUTPUT_WITH_READBACK)  
+ 
+            pin_cfg &= ~PORT_WRCONFIG_PULLEN;    //pin_cfg.18=0     //清上下拉标志      
+
+    
+    else   //省电模式
+        port->DIRCLR.reg = pin_mask;   //DIRCLR.8=0   //设置PB8为输入
+    
+
+    //把32位引脚，拆分为两个16位
+    uint32_t lower_pin_mask = (pin_mask & 0xFFFF);
+    uint32_t upper_pin_mask = (pin_mask >> 16);
+
+      // 配置pin_mask的低16位到WRCONFIG
+      // including the pin peripheral multiplexer just in case it is enabled 
+
+     //port->WRCONFIG.reg  = (lower_pin_mask << PORT_WRCONFIG_PINMASK_Pos) |
+                                           pin_cfg | PORT_WRCONFIG_WRPMUX | PORT_WRCONFIG_WRPINCFG;
+         port->WRCONFIG.reg  = (lower_pin_mask << 0) | pin_cfg | 1<<28 | 1<<30;
+
+
+      //配置pin_mask的高16位到WRCONFIG
+      // including the pin peripheral multiplexer just in case it is enabled  
+
+     //--port->WRCONFIG.reg  = (upper_pin_mask << PORT_WRCONFIG_PINMASK_Pos) |
+                                           pin_cfg | PORT_WRCONFIG_WRPMUX | PORT_WRCONFIG_WRPINCFG | PORT_WRCONFIG_HWSEL;
+        port->WRCONFIG.reg  = (upper_pin_mask <<  << 0) | pin_cfg | 1<<28 | 1<<30 | 1<<31;
+
+
+    if(!config->powersave)  
+
+        /* Set the pull-up state once the port pins are configured if one was
+           requested and it does not violate the valid set of port  configurations */
+
+        if (pin_cfg & 1<<18)  //如果有上下拉
+            
+            if (config->input_pull == SYSTEM_PINMUX_PIN_PULL_UP)  //如果是上拉
+                port->OUTSET.reg = pin_mask;     //上拉，OUTSET置1
+           else 
+                port->OUTCLR.reg = pin_mask;      //下拉，OUTSET置0
+            
+
+        /* Check if the user has requested that the output buffer be enabled */
+        if (config->direction == SYSTEM_PINMUX_PIN_DIR_OUTPUT || ### == SYSTEM_PINMUX_PIN_DIR_OUTPUT_WITH_READBACK)   //如果dir是输出或双向
+            
+            port->DIRSET.reg = pin_mask;  //设置io口为输出
+   
+ 
+
+
+=================设置gpio的输出电平========================
+
+main-->  port_pin_set_output_level
+
+
+------------------------------------------
+
+int main
+
+   port_pin_set_output_level(PIN_PB08, 0);
+
+
+
+------------
+
+//参数PIN_PB08=40
+void port_pin_set_output_level(  gpio_pin, bool level)
+ 
+    PortGroup *const  port_base;
+
+    //--port_base = port_get_group_from_gpio_pin(gpio_pin);
+        port_base =system_pinmux_get_group_from_gpio_pin(40);  //port_base=ports[0]->Group[1]    
+
+    uint32_t pin_mask  = (1UL << (gpio_pin % 32));    //pin_mask=1<<8;
+
+ 
+    if (level)  
+        port_base->OUTSET.reg = pin_mask;   //Group[1] ->OUTSET.reg = 1<<8;     //PB08=1
+    else
+        port_base->OUTCLR.reg = pin_mask;
+
+
+------
+
+PortGroup* system_pinmux_get_group_from_gpio_pin(  gpio_pin)
+ 
+    uint8_t port_index  = (gpio_pin / 128);
+    uint8_t group_index = (gpio_pin / 32);
+
+    
+    //Port *const ports[PORT_INST_NUM] = PORT_INSTS;     //Array of available ports
+        Port  ports[1]=  (Port *)0x41004400UL ;  
+
+        return &(ports[port_index]->Group[group_index]);
+ 
+
+
+
+
+
+
+
+
+
+

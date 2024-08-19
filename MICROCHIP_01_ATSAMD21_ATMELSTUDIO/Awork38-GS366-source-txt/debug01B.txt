@@ -1,0 +1,173 @@
+
+typedef struct {
+  __IO PORT_DIR_Type             DIR;             //brief Offset: 0x00 (R/W 32) Data Direction 
+  __IO PORT_DIRCLR_Type          DIRCLR;         //brief Offset: 0x04 (R/W 32) Data Direction Clear 
+  __IO PORT_DIRSET_Type          DIRSET;         //brief Offset: 0x08 (R/W 32) Data Direction Set 
+  __IO PORT_DIRTGL_Type          DIRTGL;        //brief Offset: 0x0C (R/W 32) Data Direction Toggle 
+  __IO PORT_OUT_Type             OUT;              //brief Offset: 0x10 (R/W 32) Data Output Value 
+  __IO PORT_OUTCLR_Type          OUTCLR;      //brief Offset: 0x14 (R/W 32) Data Output Value Clear 
+  __IO PORT_OUTSET_Type          OUTSET;      //brief Offset: 0x18 (R/W 32) Data Output Value Set 
+  __IO PORT_OUTTGL_Type          OUTTGL;      //brief Offset: 0x1C (R/W 32) Data Output Value Toggle 
+  __I  PORT_IN_Type              IN;                             //brief Offset: 0x20 (R/  32) Data Input Value 
+  __IO PORT_CTRL_Type            CTRL;                     //brief Offset: 0x24 (R/W 32) Control 
+  __O  PORT_WRCONFIG_Type        WRCONFIG;    //brief Offset: 0x28 ( /W 32) Write Configuration 
+       RoReg8                    Reserved1[0x4];
+  __IO PORT_PMUX_Type            PMUX[16];          //brief Offset: 0x30 (R/W  8) Peripheral Multiplexing n 
+  __IO PORT_PINCFG_Type          PINCFG[32];       //brief Offset: 0x40 (R/W  8) Pin Configuration n 
+       RoReg8                    Reserved2[0x20];
+} PortGroup;
+
+
+调用的地方参看：
+port=ports[0]->Group[1];   
+port->DIRCLR.reg = 1<<8;
+
+
+
+-------
+
+#define REG_PORT_DIR0              (0x41004400U) /**< \brief (PORT) Data Direction 0 */
+#define REG_PORT_DIRCLR0           (0x41004404U) /**< \brief (PORT) Data Direction Clear 0 */
+#define REG_PORT_DIRSET0           (0x41004408U) /**< \brief (PORT) Data Direction Set 0 */
+#define REG_PORT_DIRTGL0           (0x4100440CU) /**< \brief (PORT) Data Direction Toggle 0 */
+#define REG_PORT_OUT0              (0x41004410U) /**< \brief (PORT) Data Output Value 0 */
+#define REG_PORT_OUTCLR0           (0x41004414U) /**< \brief (PORT) Data Output Value Clear 0 */
+#define REG_PORT_OUTSET0           (0x41004418U) /**< \brief (PORT) Data Output Value Set 0 */
+#define REG_PORT_OUTTGL0           (0x4100441CU) /**< \brief (PORT) Data Output Value Toggle 0 */
+#define REG_PORT_IN0               (0x41004420U) /**< \brief (PORT) Data Input Value 0 */
+#define REG_PORT_CTRL0             (0x41004424U) /**< \brief (PORT) Control 0 */
+#define REG_PORT_WRCONFIG0         (0x41004428U) /**< \brief (PORT) Write Configuration 0 */
+#define REG_PORT_PMUX0             (0x41004430U) /**< \brief (PORT) Peripheral Multiplexing 0 */
+#define REG_PORT_PINCFG0           (0x41004440U) /**< \brief (PORT) Pin Configuration 0 */
+
+#define REG_PORT_DIR1              (0x41004480U) /**< \brief (PORT) Data Direction 1 */
+#define REG_PORT_DIRCLR1           (0x41004484U) /**< \brief (PORT) Data Direction Clear 1 */
+#define REG_PORT_DIRSET1           (0x41004488U) /**< \brief (PORT) Data Direction Set 1 */
+#define REG_PORT_DIRTGL1           (0x4100448CU) /**< \brief (PORT) Data Direction Toggle 1 */
+#define REG_PORT_OUT1              (0x41004490U) /**< \brief (PORT) Data Output Value 1 */
+#define REG_PORT_OUTCLR1           (0x41004494U) /**< \brief (PORT) Data Output Value Clear 1 */
+#define REG_PORT_OUTSET1           (0x41004498U) /**< \brief (PORT) Data Output Value Set 1 */
+#define REG_PORT_OUTTGL1           (0x4100449CU) /**< \brief (PORT) Data Output Value Toggle 1 */
+#define REG_PORT_IN1               (0x410044A0U) /**< \brief (PORT) Data Input Value 1 */
+#define REG_PORT_CTRL1             (0x410044A4U) /**< \brief (PORT) Control 1 */
+#define REG_PORT_WRCONFIG1         (0x410044A8U) /**< \brief (PORT) Write Configuration 1 */
+#define REG_PORT_PMUX1             (0x410044B0U) /**< \brief (PORT) Peripheral Multiplexing 1 */
+#define REG_PORT_PINCFG1           (0x410044C0U) /**< \brief (PORT) Pin Configuration 1 */
+
+-----------
+
+
+#define PORT              ((Port     *)0x41004400UL)           /**< \brief (PORT) APB Base Address */
+#define PORT_IOBUS        ((Port     *)0x60000000UL)      /**< \brief (PORT) IOBUS Base Address */
+#define PORT_INST_NUM     1                                       /**< \brief (PORT) Number of instances */
+#define PORT_INSTS        { PORT }                                /**< \brief (PORT) Instances List */
+
+
+typedef struct 
+{
+       PortGroup                 Group[2];    //brief Offset: 0x00 PortGroup groups [GROUPS]   
+} Port;
+
+#define PIN_PB08                          40         /**< \brief Pin Number for PB08 */
+#define PORT_PB08                 (1ul <<  8)   /**< \brief PORT Mask  for PB08 */
+
+
+
+--------------------------------
+
+#define SYSTEM_PINMUX_GPIO    (1 << 7)
+
+
+#define PORT_WRCONFIG_PINMASK_Pos   0            /**< \brief (PORT_WRCONFIG) Pin Mask for Multiple Pin Configuration */
+#define PORT_WRCONFIG_PINMASK_Msk   (0xFFFFul << PORT_WRCONFIG_PINMASK_Pos)
+
+
+#define PORT_WRCONFIG_PMUXEN_Pos    16           /**< \brief (PORT_WRCONFIG) Peripheral Multiplexer Enable */
+#define PORT_WRCONFIG_PMUXEN        (0x1ul << PORT_WRCONFIG_PMUXEN_Pos)
+
+#define PORT_WRCONFIG_PMUX_Pos      24           /**< \brief (PORT_WRCONFIG) Peripheral Multiplexing */
+#define PORT_WRCONFIG_PMUX_Msk      (0xFul << PORT_WRCONFIG_PMUX_Pos)
+
+#define PORT_WRCONFIG_INEN_Pos      17           /**< \brief (PORT_WRCONFIG) Input Enable */
+#define PORT_WRCONFIG_INEN          (0x1ul << PORT_WRCONFIG_INEN_Pos)
+
+#define PORT_WRCONFIG_PULLEN_Pos    18           /**< \brief (PORT_WRCONFIG) Pull Enable */
+#define PORT_WRCONFIG_PULLEN        (0x1ul << PORT_WRCONFIG_PULLEN_Pos)
+
+#define PORT_WRCONFIG_WRPMUX_Pos    28           /**< \brief (PORT_WRCONFIG) Write PMUX */
+#define PORT_WRCONFIG_WRPMUX        (0x1ul << PORT_WRCONFIG_WRPMUX_Pos)
+
+#define PORT_WRCONFIG_WRPINCFG_Pos  30           /**< \brief (PORT_WRCONFIG) Write PINCFG */
+#define PORT_WRCONFIG_WRPINCFG      (0x1ul << PORT_WRCONFIG_WRPINCFG_Pos)
+
+#define PORT_WRCONFIG_HWSEL_Pos     31           /**< \brief (PORT_WRCONFIG) Half-Word Select */
+#define PORT_WRCONFIG_HWSEL         (0x1ul << PORT_WRCONFIG_HWSEL_Pos)
+
+
+
+
+=========================================
+
+
+enum port_pin_dir 
+{
+    PORT_PIN_DIR_INPUT               = SYSTEM_PINMUX_PIN_DIR_INPUT,
+    PORT_PIN_DIR_OUTPUT              = SYSTEM_PINMUX_PIN_DIR_OUTPUT,
+    PORT_PIN_DIR_OUTPUT_WTH_READBACK = SYSTEM_PINMUX_PIN_DIR_OUTPUT_WITH_READBACK,
+};
+
+enum port_pin_pull 
+{ 
+    PORT_PIN_PULL_NONE = SYSTEM_PINMUX_PIN_PULL_NONE, 
+    PORT_PIN_PULL_UP   = SYSTEM_PINMUX_PIN_PULL_UP, 
+    PORT_PIN_PULL_DOWN = SYSTEM_PINMUX_PIN_PULL_DOWN,
+};
+
+struct port_config
+ {
+    enum port_pin_dir  direction;
+    enum port_pin_pull input_pull;
+    bool powersave;
+};
+
+ 
+
+==============参考======================
+
+
+
+enum system_pinmux_pin_dir
+ { 
+    SYSTEM_PINMUX_PIN_DIR_INPUT, 
+    SYSTEM_PINMUX_PIN_DIR_OUTPUT, 
+    SYSTEM_PINMUX_PIN_DIR_OUTPUT_WITH_READBACK,
+};
+
+enum system_pinmux_pin_pull 
+{
+    SYSTEM_PINMUX_PIN_PULL_NONE,
+    SYSTEM_PINMUX_PIN_PULL_UP,
+    SYSTEM_PINMUX_PIN_PULL_DOWN,
+};
+
+
+struct system_pinmux_config 
+{ 
+    uint8_t mux_position; 
+    enum system_pinmux_pin_dir direction; 
+    enum system_pinmux_pin_pull input_pull; 
+    bool powersave;
+};
+
+
+system_pinmux_get_config_defaults(*const config)
+{
+    config->mux_position = SYSTEM_PINMUX_GPIO;
+    config->direction    = SYSTEM_PINMUX_PIN_DIR_INPUT;
+    config->input_pull   = SYSTEM_PINMUX_PIN_PULL_UP;
+    config->powersave    = false;
+}
+
+
+
+

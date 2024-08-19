@@ -1,0 +1,561 @@
+
+
+---------------------------------i2c初始化-----------------------------------------
+
+flow：
+
+   main-->  configure_i2c_master-->  i2c_master_get_config_defaults-->  i2c_master_init-->  i2c_master_enable 
+
+
+--------------------------
+
+
+int main
+
+   configure_i2c_master
+
+
+---------
+
+//I2C初始化一
+configure_i2c_master( )
+
+    struct  i2c_master_config       config_i2c_master;
+
+    //设置默认的i2c参数
+    i2c_master_get_config_defaults(&config_i2c_master);
+
+    config_i2c_master.buffer_timeout = 10000;
+
+    //根据默认的i2c参数，初始化i2c
+    i2c_master_init( &i2c_master_instance, CONF_I2C_MASTER_MODULE, &config_i2c_master );
+
+    //使能i2c master
+    i2c_master_enable(&i2c_master_instance);
+
+
+---------------
+
+
+//I2C初始化二
+
+参数1:  输出,   i2c_master_instance
+参数2:  输入,   CONF_I2C_MASTER_MODULE     //SERCOM2
+参数3:  输入,   &config_i2c_master
+
+i2c_master_init( *module, *hw, *config) 
+
+    module->hw = hw;   //SERCOM2
+
+    SercomI2cm *const    i2c_module = &(module->hw->I2CM);    // i2c_module =I2CM (做i2c主机)  
+
+    uint32_t  sercom_index = _sercom_get_sercom_inst_index(module->hw);     //sercom_index = 2
+
+
+    uint32_t pm_index, gclk_index;
+ 
+    pm_index     = sercom_index + PM_APBCMASK_SERCOM0_Pos;     //2+2
+    gclk_index   = sercom_index + SERCOM0_GCLK_ID_CORE;              //2+20
+
+ 
+    system_apb_clock_set_mask( SYSTEM_CLOCK_APB_APBC, 1 << pm_index );  //设置相关时钟
+
+
+   //设置GCLK
+    struct system_gclk_chan_config   gclk_chan_conf;
+    system_gclk_chan_get_config_defaults(&gclk_chan_conf);            //设置默认参数
+    gclk_chan_conf.source_generator = config->generator_source;    //设置时钟源为GCLK_GENERATOR_0
+
+    system_gclk_chan_set_config(gclk_index, &gclk_chan_conf);         //时钟相关，待理解先跳过
+    system_gclk_chan_enable(gclk_index);                                           //应是使能时钟id
+    sercom_set_gclk_generator(config->generator_source, false);        //时钟相关，待理解先跳过
+
+
+    /* Check if module is enabled. */
+    if (i2c_module->CTRLA.reg & SERCOM_I2CM_CTRLA_ENABLE)  //i2c拒绝
+        return STATUS_ERR_DENIED;    
+
+    /* Check if reset is in progress. */
+    if (i2c_module->CTRLA.reg & SERCOM_I2CM_CTRLA_SWRST)  //i2c忙
+        return STATUS_BUSY;   
+
+    // Set sercom module to operate in I2C master mode.  
+    i2c_module->CTRLA.reg = SERCOM_I2CM_CTRLA_MODE(0x5);    //I2c可用，设置i2c为master模式
+
+
+    /* Set config and return status. */    //I2C初始化三
+    _i2c_master_set_config(module, config);
+
+
+
+-----
+
+//I2C初始化三
+参数1:  输入,   CONF_I2C_MASTER_MODULE                  //SERCOM2
+参数2:  输入,   &config_i2c_master
+_i2c_master_set_config( *const module, *const config)
+
+ 
+    SercomI2cm *const  i2c_module = &(module->hw->I2CM);                     // i2c_module =I2CM (做i2c主机)
+    Sercom *const  sercom_hw = module->hw;                                             //SERCOM2
+    uint8_t  sercom_index = _sercom_get_sercom_inst_index(sercom_hw);      //sercom_index = 2
+
+
+
+
+//------------------------------------设置i2c引脚pd0 sda--------------------------------------------------
+
+    //设置i2c引脚
+    struct system_pinmux_config    pin_conf;
+
+    //system_pinmux_get_config_defaults(&pin_conf);                 //设置默认mux位置
+        pin_conf->mux_position = SYSTEM_PINMUX_GPIO;          // (1 << 7)  应为临时多功能引脚  (在下面还要重新具体赋值)
+
+    pad0 = config->pinmux_pad0;     //pad0=0
+    pad1 = config->pinmux_pad1;     //pad1=0
+
+
+
+
+    /* SERCOM PAD0 - SDA */
+    if (pad0 == PINMUX_DEFAULT)     //if pad0==0
+        pad0 = _sercom_get_default_pad(sercom_hw, 0);
+    
+
+
+---------------------------------------------------------------------------------------------------------------------
+
+
+    pin_conf.mux_position = pad0 & 0xFFFF;       //应为引脚标号（重新具体赋值mux_position）
+    pin_conf.direction   = SYSTEM_PINMUX_PIN_DIR_OUTPUT_WITH_READBACK;     //引脚方向
+    system_pinmux_pin_set_config(pad0 >> 16, &pin_conf);       //配置pd0 sda引脚
+
+
+//----------------------------------设置i2c引脚pd0 sda------end--------------------------------------------
+
+
+
+    /* SERCOM PAD1 - SCL */
+    if (pad1 == PINMUX_DEFAULT)  
+        pad1 = _sercom_get_default_pad(sercom_hw, 1);
+  
+    pin_conf.mux_position = pad1 & 0xFFFF;
+    pin_conf.direction    = SYSTEM_PINMUX_PIN_DIR_OUTPUT_WITH_READBACK;
+    system_pinmux_pin_set_config(pad1 >> 16, &pin_conf);
+
+
+
+    /* Save timeout on unknown bus state in software module. */
+    module->unknown_bus_state_timeout = config->unknown_bus_state_timeout;
+
+    /* Save timeout on buffer write. */
+    module->buffer_timeout = config->buffer_timeout;
+
+    /* Set whether module should run in standby. */
+    if (config->run_in_standby || system_is_debugger_present()) 
+        tmp_ctrla = SERCOM_I2CM_CTRLA_RUNSTDBY;
+    else 
+        tmp_ctrla = 0;
+
+
+    /* Check and set start data hold timeout. */
+    if (config->start_hold_time != I2C_MASTER_START_HOLD_TIME_DISABLED) 
+        tmp_ctrla |= config->start_hold_time;
+   
+
+    //设置传输速度
+    tmp_ctrla |= config->transfer_speed;
+
+    //关于 SCL low timeout 
+    if (config->scl_low_timeout) 
+        tmp_ctrla |= SERCOM_I2CM_CTRLA_LOWTOUTEN;
+ 
+
+   //关于 配置inactive bus timeout 
+    if (config->inactive_timeout != I2C_MASTER_INACTIVE_TIMEOUT_DISABLED)  
+        tmp_ctrla |= config->inactive_timeout;
+   
+
+    //关于配置 SCL clock stretch(传播) mode 
+    if (config->scl_stretch_only_after_ack_bit || (config->transfer_speed == I2C_MASTER_SPEED_HIGH_SPEED))  
+        tmp_ctrla |= SERCOM_I2CM_CTRLA_SCLSM;
+    
+
+    //关于设置 slave SCL low extend timeout.  
+    if (config->slave_scl_low_extend_timeout)  
+        tmp_ctrla |= SERCOM_I2CM_CTRLA_SEXTTOEN;
+  
+
+   //关于设置 master SCL low extend timeout.  
+    if (config->master_scl_low_extend_timeout)  
+        tmp_ctrla |= SERCOM_I2CM_CTRLA_MEXTTOEN;
+ 
+
+    //关于设置 register CTRLA 
+    i2c_module->CTRLA.reg |= tmp_ctrla;
+
+    //关于设置 in CTRLB.  
+    i2c_module->CTRLB.reg = SERCOM_I2CM_CTRLB_SMEN;
+
+    /* Find and set baudrate, considering sda/scl rise time */
+    uint32_t fgclk       = system_gclk_chan_get_hz(SERCOM0_GCLK_ID_CORE + sercom_index);
+    uint32_t fscl        = 1000 * config->baud_rate;
+    uint32_t fscl_hs     = 1000 * config->baud_rate_high_speed;
+    uint32_t trise       = config->sda_scl_rise_time_ns;
+    
+    tmp_baud = (int32_t)(div_ceil(
+            fgclk - fscl * (10 + (fgclk * 0.000000001)* trise), 2 * fscl));
+    
+    /* For High speed mode, set the SCL ratio of high:low to 1:2. */
+    if (config->transfer_speed == I2C_MASTER_SPEED_HIGH_SPEED)  
+        tmp_baudlow_hs = (int32_t)((fgclk * 2.0) / (3.0 * fscl_hs) - 1);
+        if (tmp_baudlow_hs) 
+            tmp_baud_hs = (int32_t)(fgclk / fscl_hs) - 2 - tmp_baudlow_hs;
+       else  
+            tmp_baud_hs = (int32_t)(div_ceil(fgclk, 2 * fscl_hs)) - 1;
+    
+
+    /* Check that baudrate is supported at current speed. */
+    if (tmp_baud > 255 || tmp_baud < 0 || tmp_baud_hs > 255 || tmp_baud_hs < 0) 
+        /* Baud rate not supported. */
+        tmp_status_code = STATUS_ERR_BAUDRATE_UNAVAILABLE;
+     
+    if (tmp_status_code != STATUS_ERR_BAUDRATE_UNAVAILABLE)  
+        /* Baud rate acceptable. */
+        i2c_module->BAUD.reg = SERCOM_I2CM_BAUD_BAUD(tmp_baud) |
+            SERCOM_I2CM_BAUD_HSBAUD(tmp_baud_hs) | SERCOM_I2CM_BAUD_HSBAUDLOW(tmp_baudlow_hs);
+ 
+
+
+--------------------
+
+
+//I2c引脚参数设置二
+输入参数： SERCOM2, 0
+sercom_get_default_pad( *sercom_module, pad)
+ 
+    switch ((uintptr_t)sercom_module) 
+              
+        //自动生产look up引脚表
+        //MREPEAT(6, _SERCOM_PAD_DEFAULTS_CASE, pad)
+           MREPEAT6 (_SERCOM_PAD_DEFAULTS_CASE, pad);
+
+
+//I2c引脚参数设置三
+
+#define _SERCOM_PAD_DEFAULTS_CASE(n, pad)   //n=2,  pad=0   
+        case (uintptr_t)SERCOM##n: 
+            switch (pad) { 
+                case 0: 
+                    return SERCOM##n##_PAD0_DEFAULT;     //pad0, sda
+                case 1: 
+                    return SERCOM##n##_PAD1_DEFAULT;    //pad1, sck
+                case 2: 
+                    return SERCOM##n##_PAD2_DEFAULT; 
+                case 3: 
+                    return SERCOM##n##_PAD3_DEFAULT; 
+            } 
+
+     /* SERCOM2 */
+    #define SERCOM2_PAD0_DEFAULT      PINMUX_PA08D_SERCOM2_PAD0
+    #define SERCOM2_PAD1_DEFAULT      PINMUX_PA09D_SERCOM2_PAD1
+
+
+-----
+
+//配置i2c引脚一
+ system_pinmux_pin_set_config(  gpio_pin, *const config)
+ 
+    PortGroup *const port = system_pinmux_get_group_from_gpio_pin(gpio_pin);
+    uint32_t pin_mask = (1UL << (gpio_pin % 32));
+
+    _system_pinmux_config(port, pin_mask, config);
+ 
+
+---
+
+//配置i2c引脚二
+_system_pinmux_config( *const port,  pin_mask,  *const config)
+ 
+    /* Track the configuration bits into a temporary variable before writing */
+    uint32_t pin_cfg = 0;
+
+    /* Enabled powersave mode, don't create configuration */
+    if (!config->powersave) {
+        /* Enable the pin peripheral MUX flag if non-GPIO selected (pinmux will
+         * be written later) and store the new MUX mask */
+        if (config->mux_position != SYSTEM_PINMUX_GPIO) {
+            pin_cfg |= PORT_WRCONFIG_PMUXEN;
+            pin_cfg |= (config->mux_position << PORT_WRCONFIG_PMUX_Pos);
+        }
+
+        /* Check if the user has requested that the input buffer be enabled */
+        if ((config->direction == SYSTEM_PINMUX_PIN_DIR_INPUT) ||
+                (config->direction == SYSTEM_PINMUX_PIN_DIR_OUTPUT_WITH_READBACK)) {
+            /* Enable input buffer flag */
+            pin_cfg |= PORT_WRCONFIG_INEN;
+
+            /* Enable pull-up/pull-down control flag if requested */
+            if (config->input_pull != SYSTEM_PINMUX_PIN_PULL_NONE) {
+                pin_cfg |= PORT_WRCONFIG_PULLEN;
+            }
+
+            /* Clear the port DIR bits to disable the output buffer */
+            port->DIRCLR.reg = pin_mask;
+        }
+
+        /* Check if the user has requested that the output buffer be enabled */
+        if ((config->direction == SYSTEM_PINMUX_PIN_DIR_OUTPUT) ||
+                (config->direction == SYSTEM_PINMUX_PIN_DIR_OUTPUT_WITH_READBACK)) {
+            /* Cannot use a pull-up if the output driver is enabled,
+             * if requested the input buffer can only sample the current
+             * output state */
+            pin_cfg &= ~PORT_WRCONFIG_PULLEN;
+        }
+    } else {
+        port->DIRCLR.reg = pin_mask;
+    }
+
+    /* The Write Configuration register (WRCONFIG) requires the
+     * pins to to grouped into two 16-bit half-words - split them out here */
+    uint32_t lower_pin_mask = (pin_mask & 0xFFFF);
+    uint32_t upper_pin_mask = (pin_mask >> 16);
+
+    /* Configure the lower 16-bits of the port to the desired configuration,
+     * including the pin peripheral multiplexer just in case it is enabled */
+    port->WRCONFIG.reg
+        = (lower_pin_mask << PORT_WRCONFIG_PINMASK_Pos) |
+            pin_cfg | PORT_WRCONFIG_WRPMUX | PORT_WRCONFIG_WRPINCFG;
+
+    /* Configure the upper 16-bits of the port to the desired configuration,
+     * including the pin peripheral multiplexer just in case it is enabled */
+    port->WRCONFIG.reg
+        = (upper_pin_mask << PORT_WRCONFIG_PINMASK_Pos) |
+            pin_cfg | PORT_WRCONFIG_WRPMUX | PORT_WRCONFIG_WRPINCFG |
+            PORT_WRCONFIG_HWSEL;
+
+    if(!config->powersave) {
+        /* Set the pull-up state once the port pins are configured if one was
+         * requested and it does not violate the valid set of port
+         * configurations */
+        if (pin_cfg & PORT_WRCONFIG_PULLEN) {
+            /* Set the OUT register bits to enable the pull-up if requested,
+             * clear to enable pull-down */
+            if (config->input_pull == SYSTEM_PINMUX_PIN_PULL_UP) {
+                port->OUTSET.reg = pin_mask;
+            } else {
+                port->OUTCLR.reg = pin_mask;
+            }
+        }
+
+        /* Check if the user has requested that the output buffer be enabled */
+        if ((config->direction == SYSTEM_PINMUX_PIN_DIR_OUTPUT) ||
+                (config->direction == SYSTEM_PINMUX_PIN_DIR_OUTPUT_WITH_READBACK)) {
+            /* Set the port DIR bits to enable the output buffer */
+            port->DIRSET.reg = pin_mask;
+ 
+------
+
+//I2c引脚参数设置一
+//输入参数；pin_conf
+void system_pinmux_get_config_defaults( *const config )
+
+    config->mux_position = SYSTEM_PINMUX_GPIO;                  // (1 << 7)
+    config->direction    = SYSTEM_PINMUX_PIN_DIR_INPUT;
+    config->input_pull   = SYSTEM_PINMUX_PIN_PULL_UP;
+    config->powersave    = false;
+
+----------
+
+实际上就是返回串行口的标号2
+
+输入参数： sercom2
+uint8_t   _sercom_get_sercom_inst_index(  sercom_instance )
+ 
+    //Save all available SERCOM instances for compare/
+    Sercom *sercom_instances[SERCOM_INST_NUM] = SERCOM_INSTS;
+
+    /* Find index for sercom instance */
+    for (  i = 0; i < SERCOM_INST_NUM;  i++) 
+        if ((uintptr_t)sercom_instance == (uintptr_t)sercom_instances[i]) 
+            return i;
+        
+     
+
+---------------------------------i2c写入和读取-----------------------------------------
+
+
+   main-->  i2c_master_write_packet_wait-->  i2c_master_read_packet_wait
+
+
+
+-------------------------------
+
+main()
+
+    while(1)
+
+        packet.data = write_buffer1;  timeout=0;
+        while (i2c_master_write_packet_wait(&i2c_master_instance, &packet) !=STATUS_OK)
+        {
+            if (timeout++ >= TIMEOUT)    
+                break;
+            
+                icount=20000;
+                while(icount--) ; 
+        }
+
+
+        packet.data = read_buffer;   timeout=0;
+       while (i2c_master_read_packet_wait(&i2c_master_instance, &packet) !=STATUS_OK) 
+       {
+            if (timeout++ >= TIMEOUT)  
+                break;
+        
+        }
+
+----------------------------------
+
+输入参数1：i2c_master_instance
+输入参数2：packet
+i2c_master_write_packet_wait(  *module, *packet)
+ 
+    module->send_stop = true;
+    module->send_nack = true;
+
+    return _i2c_master_write_packet(module, packet);
+ 
+
+
+---------
+
+
+功能：i2c写数据
+输入参数1：i2c_master_instance
+输入参数2：packet
+
+ _i2c_master_write_packet( *module, *packet )
+ 
+    i2c_module = &(module->hw->I2CM);
+     tmp_data_length = packet->data_length;
+    _i2c_master_wait_for_sync(module);
+
+    //是否高速率（否）,先跳过
+    if (packet->high_speed) 
+        _i2c_master_send_hs_master_code(module, packet->hs_master_code);
+    
+
+    // Set action to ACK  从slave读取一个字节后，发送ACK回应 （同以前做的项目一样）
+    i2c_module->CTRLB.reg &= ~SERCOM_I2CM_CTRLB_ACKACT;
+
+
+    // Set address and direction bit. Will send start command on bus.    //似乎是在发送地址
+    i2c_module->ADDR.reg = (packet->address << 1) | I2C_TRANSFER_WRITE | (packet->high_speed << 14);
+  
+
+    //发送器件地址后，检查总线的反馈，MB和SB只要有一个置1时，说明总线反馈成功
+    tmp_status = _i2c_master_wait_for_bus(module);
+
+    //检查发送地址后，是否反馈正确
+    if (tmp_status == STATUS_OK) 
+        tmp_status = _i2c_master_address_response(module);
+   
+
+
+
+    /* Check that no error has occurred. */
+    if (tmp_status == STATUS_OK) 
+   {
+        /* Buffer counter. */
+        uint16_t buffer_counter = 0;
+
+        /* Write data buffer. */
+        while (tmp_data_length--) 
+       {
+            /* Check that bus ownership is not lost. */
+            if (!(i2c_module->STATUS.reg & SERCOM_I2CM_STATUS_BUSSTATE(2)))  //另外有master占用总线
+                return STATUS_ERR_PACKET_COLLISION;
+            
+
+            /* Write byte to slave. */
+            _i2c_master_wait_for_sync(module);
+            i2c_module->DATA.reg = packet->data[buffer_counter++];
+
+            /* Wait for response. */
+            tmp_status = _i2c_master_wait_for_bus(module);
+
+            /* Check for error. */
+            if (tmp_status != STATUS_OK) 
+                break;
+            
+
+            //检查从机返回ACK，如果是NACK则返回错误并退出函数  --ACK表示正确
+            if (i2c_module->STATUS.reg & SERCOM_I2CM_STATUS_RXNACK) 
+ 
+                tmp_status = STATUS_ERR_OVERFLOW;
+                break;
+            
+        }
+
+        if (module->send_stop) 
+            /* Stop command */
+            _i2c_master_wait_for_sync(module);
+            i2c_module->CTRLB.reg |= SERCOM_I2CM_CTRLB_CMD(3);
+        
+    }
+
+    return tmp_status;
+ 
+-----
+
+//发送器件地址后，检查总线的反馈，MB和SB只要有一个置1时，说明总线反馈成功
+输入参数1：i2c_master_instance
+_i2c_master_wait_for_bus( *module)
+ 
+    i2c_module = &(module->hw->I2CM);
+
+    // 当等待检查MB和SB，只要有一个置1时，说明总线反馈成功
+    uint16_t timeout_counter = 0;
+    while (!(i2c_module->INTFLAG.reg & 0<<1) && !(i2c_module->INTFLAG.reg & 1<<1))    //bit0=1  -- 有MB，bit1=1 -- 有SB
+         
+        if (++timeout_counter >= module->buffer_timeout) 
+            return STATUS_ERR_TIMEOUT;       
+    
+    return STATUS_OK;
+ 
+
+----------
+
+//检查写入器件地址后的反馈, 
+输入参数1：i2c_master_instance
+_i2c_master_address_response( *module)
+ 
+    i2c_module = &(module->hw->I2CM);    //i2c_module=I2CM
+
+    /* Check for error and ignore bus-error; workaround for BUSSTATE stuck in   * BUSY */
+    if (INTFLAG & SB)  //如果从机在线
+
+        INTFLAG = SB;  //清SB标志
+
+        /* Check arbitration. */
+        if ( STATUS  & ARBLOST) 
+            //返回包冲突
+            return STATUS_ERR_PACKET_COLLISION;
+        
+      //检查从机返回的 ack 
+     else if (STATUS & RXNACK)   //如果从机没有返回ack
+        /* Slave busy. Issue ack and stop command. */
+         CTRLB  |= SERCOM_I2CM_CTRLB_CMD(3);    //CTRLB.CMD=3
+
+        /* Return bad address value. */
+        return STATUS_ERR_BAD_ADDRESS;
+    
+    return STATUS_OK;  
+
+-------------------
+
+
+
+
+
+

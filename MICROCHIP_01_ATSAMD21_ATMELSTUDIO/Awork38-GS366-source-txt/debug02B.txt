@@ -1,0 +1,583 @@
+
+-------------------clock_source--------------------------------
+
+#define GCLK_GENDIV_BITS            16
+
+#define GCLK_GEN_NUM                9
+#define GCLK_GEN_NUM_MSB            (GCLK_GEN_NUM-1)
+
+#define GCLK_GEN_SOURCE_NUM_MSB     (GCLK_SOURCE_NUM-1)
+#define GCLK_NUM                    37
+#define GCLK_SOURCE_DFLL48M         7
+#define GCLK_SOURCE_FDPLL           8
+#define GCLK_SOURCE_GCLKGEN1        2
+#define GCLK_SOURCE_GCLKIN          1
+#define GCLK_SOURCE_NUM             9
+#define GCLK_SOURCE_OSCULP32K       3
+#define GCLK_SOURCE_OSC8M           6
+#define GCLK_SOURCE_OSC32K          4
+#define GCLK_SOURCE_XOSC            0
+#define GCLK_SOURCE_XOSC32K         5
+
+---
+
+enum gclk_generator 
+{  
+    GCLK_GENERATOR_0, 
+    GCLK_GENERATOR_1, 
+    GCLK_GENERATOR_2, 
+    GCLK_GENERATOR_3, 
+    GCLK_GENERATOR_4, 
+    GCLK_GENERATOR_5, 
+    GCLK_GENERATOR_6, 
+    GCLK_GENERATOR_7, 
+    GCLK_GENERATOR_8, 
+    GCLK_GENERATOR_9,
+};
+
+
+-------------------counter_size--------------------------------
+
+
+#define   TC_CTRLA_MODE_COUNT16_Val       0x0u   
+#define   TC_CTRLA_MODE_COUNT8_Val        0x1u   
+#define   TC_CTRLA_MODE_COUNT32_Val       0x2u   
+#define TC_CTRLA_MODE_COUNT16       (TC_CTRLA_MODE_COUNT16_Val     << TC_CTRLA_MODE_Pos)
+#define TC_CTRLA_MODE_COUNT8        (TC_CTRLA_MODE_COUNT8_Val      << TC_CTRLA_MODE_Pos)
+#define TC_CTRLA_MODE_COUNT32       (TC_CTRLA_MODE_COUNT32_Val     << TC_CTRLA_MODE_Pos)
+
+
+enum tc_counter_size 
+{ 
+    TC_COUNTER_SIZE_8BIT                = TC_CTRLA_MODE_COUNT8, 
+    TC_COUNTER_SIZE_16BIT               = TC_CTRLA_MODE_COUNT16, 
+    TC_COUNTER_SIZE_32BIT               = TC_CTRLA_MODE_COUNT32,
+};
+
+-------------------prescaler_size--------------------------------
+
+enum tc_clock_prescaler 
+{ 
+    TC_CLOCK_PRESCALER_DIV1             = TC_CTRLA_PRESCALER(0), 
+    TC_CLOCK_PRESCALER_DIV2             = TC_CTRLA_PRESCALER(1), 
+    TC_CLOCK_PRESCALER_DIV4             = TC_CTRLA_PRESCALER(2), 
+    TC_CLOCK_PRESCALER_DIV8             = TC_CTRLA_PRESCALER(3), 
+    TC_CLOCK_PRESCALER_DIV16            = TC_CTRLA_PRESCALER(4), 
+    TC_CLOCK_PRESCALER_DIV64            = TC_CTRLA_PRESCALER(5), 
+    TC_CLOCK_PRESCALER_DIV256           = TC_CTRLA_PRESCALER(6), 
+    TC_CLOCK_PRESCALER_DIV1024          = TC_CTRLA_PRESCALER(7),
+};
+
+-------------------wave_generation--------------------------------
+
+#define   TC_CTRLA_WAVEGEN_NFRQ_Val       0x0u   
+#define   TC_CTRLA_WAVEGEN_MFRQ_Val       0x1u   
+#define   TC_CTRLA_WAVEGEN_NPWM_Val       0x2u   
+#define   TC_CTRLA_WAVEGEN_MPWM_Val       0x3u   
+#define TC_CTRLA_WAVEGEN_NFRQ       (TC_CTRLA_WAVEGEN_NFRQ_Val     << TC_CTRLA_WAVEGEN_Pos)
+#define TC_CTRLA_WAVEGEN_MFRQ       (TC_CTRLA_WAVEGEN_MFRQ_Val     << TC_CTRLA_WAVEGEN_Pos)
+#define TC_CTRLA_WAVEGEN_NPWM       (TC_CTRLA_WAVEGEN_NPWM_Val     << TC_CTRLA_WAVEGEN_Pos)
+#define TC_CTRLA_WAVEGEN_MPWM       (TC_CTRLA_WAVEGEN_MPWM_Val     << TC_CTRLA_WAVEGEN_Pos)
+
+enum tc_wave_generation 
+{
+    TC_WAVE_GENERATION_NORMAL_FREQ      = TC_CTRLA_WAVEGEN_NFRQ,
+    TC_WAVE_GENERATION_MATCH_FREQ       = TC_CTRLA_WAVEGEN_MFRQ,
+    TC_WAVE_GENERATION_NORMAL_PWM       = TC_CTRLA_WAVEGEN_NPWM,
+    TC_WAVE_GENERATION_MATCH_PWM        = TC_CTRLA_WAVEGEN_MPWM,
+};
+
+------------------- reload_action --------------------------------
+
+#define   TC_CTRLA_PRESCSYNC_GCLK_Val        0x0u   
+#define   TC_CTRLA_PRESCSYNC_PRESC_Val      0x1u  
+#define   TC_CTRLA_PRESCSYNC_RESYNC_Val   0x2u  
+#define TC_CTRLA_PRESCSYNC_GCLK     (TC_CTRLA_PRESCSYNC_GCLK_Val   << TC_CTRLA_PRESCSYNC_Pos)
+#define TC_CTRLA_PRESCSYNC_PRESC    (TC_CTRLA_PRESCSYNC_PRESC_Val  << TC_CTRLA_PRESCSYNC_Pos)
+#define TC_CTRLA_PRESCSYNC_RESYNC   (TC_CTRLA_PRESCSYNC_RESYNC_Val << TC_CTRLA_PRESCSYNC_Pos)
+
+enum tc_reload_action
+ {
+    TC_RELOAD_ACTION_GCLK               = TC_CTRLA_PRESCSYNC_GCLK,
+    TC_RELOAD_ACTION_PRESC              = TC_CTRLA_PRESCSYNC_PRESC,
+    TC_RELOAD_ACTION_RESYNC             = TC_CTRLA_PRESCSYNC_RESYNC,
+};
+
+------------------- waveform_invert_output --------------------------------
+
+#define TC_CTRLC_INVEN_Pos          0         
+#define TC_CTRLC_INVEN_Msk          (0x3u << TC_CTRLC_INVEN_Pos)
+#define TC_CTRLC_INVEN(value)       ((TC_CTRLC_INVEN_Msk &  ((value) << TC_CTRLC_INVEN_Pos)) )
+
+enum tc_waveform_invert_output 
+{
+    TC_WAVEFORM_INVERT_OUTPUT_NONE      = 0,
+    TC_WAVEFORM_INVERT_OUTPUT_CHANNEL_0 = TC_CTRLC_INVEN(1),
+    TC_WAVEFORM_INVERT_OUTPUT_CHANNEL_1 = TC_CTRLC_INVEN(2),
+};
+
+------------------- count_direction --------------------------------
+
+enum tc_count_direction
+ {
+    TC_COUNT_DIRECTION_UP,
+    TC_COUNT_DIRECTION_DOWN,
+};
+
+------------------- pwm_channel  --------------------------------
+
+struct tc_pwm_channel 
+{     
+    bool enabled;     
+    uint32_t pin_out; 
+    uint32_t pin_mux;
+};
+
+------------------- union --------------------------------
+
+struct tc_8bit_config 
+{
+    uint8_t value;
+    uint8_t period;
+    uint8_t compare_capture_channel[NUMBER_OF_COMPARE_CAPTURE_CHANNELS];
+};
+
+ tc_16bit_config 
+{
+    uint16_t value;
+    uint16_t compare_capture_channel[NUMBER_OF_COMPARE_CAPTURE_CHANNELS];
+};
+
+
+struct tc_32bit_config 
+{
+    uint32_t value;
+    uint32_t compare_capture_channel[NUMBER_OF_COMPARE_CAPTURE_CHANNELS];
+};
+
+  
+
+================timer配置总结构=================================
+
+
+#define TC_INST_NUM       5                       
+#define TC_INSTS          { TC3, TC4, TC5, TC6, TC7 }  
+
+#define TC3                           (0x42002C00U)  
+
+#define TC3_CC8_NUM                 2
+
+enum tc_compare_capture_channel 
+{
+    TC_COMPARE_CAPTURE_CHANNEL_0,
+    TC_COMPARE_CAPTURE_CHANNEL_1,
+};
+
+struct tc_config 
+{ 
+    enum gclk_generator   clock_source; 
+    bool   run_in_standby; 
+    enum   tc_counter_size   counter_size;
+    enum   tc_clock_prescaler clock_prescaler; 
+    enum   tc_wave_generation   wave_generation; 
+    enum   tc_reload_action   reload_action; 
+
+    uint8_t   waveform_invert_output; 
+    bool    enable_capture_on_channel[NUMBER_OF_COMPARE_CAPTURE_CHANNELS];  
+    bool   oneshot;
+
+    enum   tc_count_direction   count_direction;
+ 
+    struct   tc_pwm_channel pwm_channel[NUMBER_OF_COMPARE_CAPTURE_CHANNELS];
+
+     union {
+        struct tc_8bit_config counter_8_bit;
+        struct tc_16bit_config counter_16_bit;
+        struct tc_32bit_config counter_32_bit;
+    };
+
+};
+
+
+==============timer实体结构===================
+
+//tcc8
+typedef struct { 
+  __IO TC_CTRLA_Type             CTRLA;       
+  __IO TC_READREQ_Type           READREQ;     
+  __IO TC_CTRLBCLR_Type          CTRLBCLR;    
+  __IO TC_CTRLBSET_Type          CTRLBSET;    
+  __IO TC_CTRLC_Type             CTRLC;       
+       RoReg8                    Reserved1[0x1];
+  __IO TC_DBGCTRL_Type           DBGCTRL;   
+       RoReg8                    Reserved2[0x1];
+  __IO TC_EVCTRL_Type            EVCTRL;       
+  __IO TC_INTENCLR_Type          INTENCLR;     
+  __IO TC_INTENSET_Type          INTENSET;   
+  __IO TC_INTFLAG_Type           INTFLAG;     
+  __I  TC_STATUS_Type            STATUS;      
+  __IO TC_COUNT8_COUNT_Type      COUNT;      
+       RoReg8                    Reserved3[0x3];
+  __IO TC_COUNT8_PER_Type        PER;        
+       RoReg8                    Reserved4[0x3];
+  __IO TC_COUNT8_CC_Type         CC[2];     
+} TcCount8;
+
+---
+
+//tcc16
+typedef struct {  
+  __IO TC_CTRLA_Type             CTRLA;       
+  __IO TC_READREQ_Type           READREQ;     
+  __IO TC_CTRLBCLR_Type          CTRLBCLR;    
+  __IO TC_CTRLBSET_Type          CTRLBSET;    
+  __IO TC_CTRLC_Type             CTRLC;      
+       RoReg8                    Reserved1[0x1];
+  __IO TC_DBGCTRL_Type           DBGCTRL;    
+       RoReg8                    Reserved2[0x1];
+  __IO TC_EVCTRL_Type            EVCTRL;      
+  __IO TC_INTENCLR_Type          INTENCLR;    
+  __IO TC_INTENSET_Type          INTENSET;    
+  __IO TC_INTFLAG_Type           INTFLAG;    
+  __I  TC_STATUS_Type            STATUS;     
+  __IO TC_COUNT16_COUNT_Type     COUNT;     
+       RoReg8                    Reserved3[0x6];
+  __IO TC_COUNT16_CC_Type        CC[2];       
+} TcCount16;
+
+---
+
+//tcc32
+typedef struct {  
+  __IO TC_CTRLA_Type             CTRLA;       
+  __IO TC_READREQ_Type           READREQ;    
+  __IO TC_CTRLBCLR_Type          CTRLBCLR;     
+  __IO TC_CTRLBSET_Type          CTRLBSET;   
+  __IO TC_CTRLC_Type             CTRLC;       
+       RoReg8                    Reserved1[0x1];
+  __IO TC_DBGCTRL_Type           DBGCTRL;     
+       RoReg8                    Reserved2[0x1];
+  __IO TC_EVCTRL_Type            EVCTRL;      
+  __IO TC_INTENCLR_Type          INTENCLR;    
+  __IO TC_INTENSET_Type          INTENSET;     
+  __IO TC_INTFLAG_Type           INTFLAG;    
+  __I  TC_STATUS_Type            STATUS;      
+  __IO TC_COUNT32_COUNT_Type     COUNT;       
+       RoReg8                    Reserved3[0x4];
+  __IO TC_COUNT32_CC_Type        CC[2];      
+} TcCount32;
+
+
+---
+
+
+typedef union {
+       TcCount8                  COUNT8;      /**< \brief Offset: 0x00 8-bit Counter Mode */
+       TcCount16                 COUNT16;     /**< \brief Offset: 0x00 16-bit Counter Mode */
+       TcCount32                 COUNT32;     /**< \brief Offset: 0x00 32-bit Counter Mode */
+} Tc;
+
+enum tc_counter_size 
+{ 
+    TC_COUNTER_SIZE_8BIT                = TC_CTRLA_MODE_COUNT8, 
+    TC_COUNTER_SIZE_16BIT               = TC_CTRLA_MODE_COUNT16, 
+    TC_COUNTER_SIZE_32BIT               = TC_CTRLA_MODE_COUNT32,
+};
+ 
+
+struct tc_module 
+{
+    Tc *hw;    
+    enum   tc_counter_size   counter_size;
+};
+
+
+=================================================
+
+简化： define TC_INST_GCLK_ID          { MRECURSION(TC_INST_NUM, _TC_GCLK_ID, TC_INST_MAX_ID) }
+
+
+#define TPASTE2( a, b)                            a##b
+#define TPASTE3( a, b, c)                         a##b##c
+#define TC_INST_NUM       5
+#define TC_INST_MAX_ID  7
+
+define _TC_GCLK_ID(n,unused)           TPASTE3(TC,n,_GCLK_ID)   ,
+#define MRECURSION(count, macro, data) TPASTE2(MRECURSION, count) (macro, data)
+
+---
+
+define TC_INST_GCLK_ID          { MRECURSION(TC_INST_NUM, _TC_GCLK_ID, TC_INST_MAX_ID) }
+简化之一：
+
+define TC_INST_GCLK_ID          { MRECURSION(5,  _TC_GCLK_ID,  7) }
+TC_INST_GCLK_ID =  MRECURSION5(   _TC_GCLK_ID,    7 ); 
+
+
+#define MRECURSION0(  macro, data)
+#define MRECURSION1(  macro, data)    MRECURSION0(  macro, DEC_(data))   macro(data, 0)
+#define MRECURSION2(  macro, data)    MRECURSION1(  macro, DEC_(data))   macro(data, 1)
+#define MRECURSION3(  macro, data)    MRECURSION2(  macro, DEC_(data))   macro(data, 2)
+#define MRECURSION4(  macro, data)    MRECURSION3(  macro, DEC_(data))   macro(data, 3)
+#define MRECURSION5(  macro, data)    MRECURSION4(  macro, DEC_(data))   macro(data, 4)
+
+#define DEC_5                                       4
+#define DEC_4                                       3
+#define DEC_3                                       2
+#define DEC_2                                       1
+#define DEC_1                                       0
+#define DEC_(n)                                     DEC_##n
+
+简化之二： MRECURSION5
+
+TC_INST_GCLK_ID =  MRECURSION5(   _TC_GCLK_ID,    7 ); 
+TC_INST_GCLK_ID =  MRECURSION4(   _TC_GCLK_ID, 6)   _TC_GCLK_ID(7, 4)
+TC_INST_GCLK_ID =  MRECURSION4(   _TC_GCLK_ID, 6)    TC7_GCLK_ID 
+
+简化之三： MRECURSION4
+
+TC_INST_GCLK_ID =  MRECURSION3(   _TC_GCLK_ID, 5)   _TC_GCLK_ID(6, 3), TC7_GCLK_ID 
+TC_INST_GCLK_ID =  MRECURSION3(   _TC_GCLK_ID, 5), TC6_GCLK_ID,  TC7_GCLK_ID 
+
+简化之四： MRECURSION3 --  MRECURSION0
+
+TC_INST_GCLK_ID =  MRECURSION2(   _TC_GCLK_ID, 4)   TC5_GCLK_ID, TC6_GCLK_ID, TC7_GCLK_ID 
+TC_INST_GCLK_ID =  MRECURSION1(   _TC_GCLK_ID, 3)   TC4_GCLK_ID, TC5_GCLK_ID, TC6_GCLK_ID, TC7_GCLK_ID 
+TC_INST_GCLK_ID =  MRECURSION0(   _TC_GCLK_ID, 2)   TC3_GCLK_ID, TC4_GCLK_ID, TC5_GCLK_ID, TC6_GCLK_ID, TC7_GCLK_ID 
+TC_INST_GCLK_ID =                                                         TC3_GCLK_ID, TC4_GCLK_ID, TC5_GCLK_ID, TC6_GCLK_ID, TC7_GCLK_ID 
+
+----
+
+#define TC3_GCLK_ID                 27
+
+
+=================================================
+
+简化：#  define TC_INST_PM_APBCMASK      {  MRECURSION(TC_INST_NUM, _TC_PM_APBCMASK, TC_INST_MAX_ID) }
+
+#define TPASTE2( a, b)                            a##b
+#define TPASTE3( a, b, c)                         a##b##c
+#define TC_INST_NUM       5
+#define TC_INST_MAX_ID  7
+
+
+#  define _TC_PM_APBCMASK(n,unused)       TPASTE2(PM_APBCMASK_TC,n) ,
+
+---
+
+#  define TC_INST_PM_APBCMASK      {  MRECURSION(TC_INST_NUM, _TC_PM_APBCMASK, TC_INST_MAX_ID) }
+
+简化之一：
+#  define TC_INST_PM_APBCMASK      {  MRECURSION(5, _TC_PM_APBCMASK, 7) }
+TC_INST_PM_APBCMASK =  MRECURSION5(  _TC_PM_APBCMASK,    7 ); 
+
+#define MRECURSION0(  macro, data)
+#define MRECURSION1(  macro, data)    MRECURSION0(  macro, DEC_(data))   macro(data, 0)
+#define MRECURSION2(  macro, data)    MRECURSION1(  macro, DEC_(data))   macro(data, 1)
+#define MRECURSION3(  macro, data)    MRECURSION2(  macro, DEC_(data))   macro(data, 2)
+#define MRECURSION4(  macro, data)    MRECURSION3(  macro, DEC_(data))   macro(data, 3)
+#define MRECURSION5(  macro, data)    MRECURSION4(  macro, DEC_(data))   macro(data, 4)
+
+#define DEC_5                                       4
+#define DEC_4                                       3
+#define DEC_3                                       2
+#define DEC_2                                       1
+#define DEC_1                                       0
+#define DEC_(n)                                     DEC_##n
+
+简化之二： MRECURSION5
+
+TC_INST_PM_APBCMASK =  MRECURSION5( _TC_PM_APBCMASK,    7 ); 
+TC_INST_PM_APBCMASK =  MRECURSION4(   _TC_PM_APBCMASK, 6)   _TC_PM_APBCMASK(7, 4)
+TC_INST_PM_APBCMASK =  MRECURSION4(   _TC_PM_APBCMASK, 6)    PM_APBCMASK_TC7,  
+
+
+简化之三： MRECURSION4
+
+TC_INST_PM_APBCMASK =  MRECURSION3(  _TC_PM_APBCMASK, 5)   _TC_PM_APBCMASK(6, 3)  PM_APBCMASK_TC7,  
+TC_INST_PM_APBCMASK =  MRECURSION3(  _TC_PM_APBCMASK, 5)     PM_APBCMASK_TC6,  PM_APBCMASK_TC7,  
+
+
+简化之四：  MRECURSION3 --  MRECURSION0
+
+TC_INST_PM_APBCMASK =   PM_APBCMASK_TC3,  PM_APBCMASK_TC4,  PM_APBCMASK_TC5,  PM_APBCMASK_TC6,  PM_APBCMASK_TC7,  
+
+---
+
+#define PM_APBCMASK_TC3_Pos         11           /**< \brief (PM_APBCMASK) TC3 APB Clock Enable */
+#define PM_APBCMASK_TC3             (0x1u << PM_APBCMASK_TC3_Pos)
+
+
+================================
+
+struct system_pinmux_config
+ {
+	uint8_t mux_position;
+	enum system_pinmux_pin_dir direction;
+	enum system_pinmux_pin_pull input_pull;
+	bool powersave;
+};
+
+
+====================================
+
+struct system_gclk_chan_config
+{
+	enum gclk_generator source_generator;
+};
+
+
+enum gclk_generator 
+{  
+    GCLK_GENERATOR_0, 
+    GCLK_GENERATOR_1, 
+    GCLK_GENERATOR_2, 
+    GCLK_GENERATOR_3, 
+    GCLK_GENERATOR_4, 
+    GCLK_GENERATOR_5, 
+    GCLK_GENERATOR_6, 
+    GCLK_GENERATOR_7, 
+    GCLK_GENERATOR_8, 
+    GCLK_GENERATOR_9,
+};
+
+=======================
+
+#define TC_CTRLA_SWRST_Pos          0            /**< \brief (TC_CTRLA) Software Reset */
+#define TC_CTRLA_SWRST              (0x1u << TC_CTRLA_SWRST_Pos)
+
+#define TC_STATUS_SLAVE_Pos         4            /**< \brief (TC_STATUS) Slave */
+#define TC_STATUS_SLAVE             (0x1u << TC_STATUS_SLAVE_Pos)
+
+#define TC_CTRLA_ENABLE_Pos         1            /**< \brief (TC_CTRLA) Enable */
+#define TC_CTRLA_ENABLE             (0x1u << TC_CTRLA_ENABLE_Pos)
+
+
+===============================
+
+#define TC_CTRLA_ENABLE_Pos         1        
+#define TC_CTRLA_ENABLE             (0x1u << TC_CTRLA_ENABLE_Pos)
+
+#define TC_CTRLA_MODE_Pos           2         
+#define TC_CTRLA_MODE_Msk           (0x3u << TC_CTRLA_MODE_Pos)
+
+#define TC_CTRLA_MODE(value)        ((TC_CTRLA_MODE_Msk & ((value) << TC_CTRLA_MODE_Pos)))
+
+#define   TC_CTRLA_MODE_COUNT8_Val        0x1u    
+#define TC_CTRLA_MODE_COUNT8        (TC_CTRLA_MODE_COUNT8_Val      << TC_CTRLA_MODE_Pos)
+--> define TC_CTRLA_MODE_COUNT8        (1<< 2)
+
+---
+
+#define TC_CTRLA_PRESCALER_Pos      8          
+#define TC_CTRLA_PRESCALER_Msk      (0x7u << TC_CTRLA_PRESCALER_Pos)
+#define TC_CTRLA_PRESCALER(value)   ((TC_CTRLA_PRESCALER_Msk & ((value) << TC_CTRLA_PRESCALER_Pos)))
+#define   TC_CTRLA_PRESCALER_DIV16_Val    0x4u   
+-->#define TC_CTRLA_PRESCALER(16)   (4<< 8)
+
+---
+
+#define TC_CTRLA_WAVEGEN_Pos        5          
+#define TC_CTRLA_WAVEGEN_Msk        (0x3u << TC_CTRLA_WAVEGEN_Pos)
+#define TC_CTRLA_WAVEGEN(value)     ((TC_CTRLA_WAVEGEN_Msk & ((value) << TC_CTRLA_WAVEGEN_Pos)))
+#define   TC_CTRLA_WAVEGEN_NFRQ_Val       0x0u    
+#define TC_CTRLA_WAVEGEN_NFRQ       (TC_CTRLA_WAVEGEN_NFRQ_Val     << TC_CTRLA_WAVEGEN_Pos)
+--> #define TC_CTRLA_WAVEGEN_NFRQ       (0<<5)
+
+---
+
+#define TC_CTRLA_PRESCSYNC_Pos      12          
+#define TC_CTRLA_PRESCSYNC_Msk      (0x3u << TC_CTRLA_PRESCSYNC_Pos)
+#define TC_CTRLA_PRESCSYNC(value)   ((TC_CTRLA_PRESCSYNC_Msk & ((value) << TC_CTRLA_PRESCSYNC_Pos)))
+#define   TC_CTRLA_PRESCSYNC_GCLK_Val     0x0u   
+ #define TC_CTRLA_PRESCSYNC_GCLK     (TC_CTRLA_PRESCSYNC_GCLK_Val   << TC_CTRLA_PRESCSYNC_Pos)
+ -->define TC_CTRLA_PRESCSYNC_GCLK     (0<<12)
+
+---
+
+#define TC_STATUS_SYNCBUSY_Pos      7         
+#define TC_STATUS_SYNCBUSY          (0x1u << TC_STATUS_SYNCBUSY_Pos)  //1<<7
+
+
+--------------
+
+#define TC_CTRLBSET_DIR_Pos         0        
+#define TC_CTRLBSET_DIR             (0x1u << TC_CTRLBSET_DIR_Pos)
+
+#define TC_CTRLBSET_ONESHOT_Pos     2          
+#define TC_CTRLBSET_ONESHOT         (0x1u << TC_CTRLBSET_ONESHOT_Pos)
+
+
+----------------
+
+enum tc_waveform_invert_output 
+{ 
+	TC_WAVEFORM_INVERT_OUTPUT_NONE      = 0, 
+	TC_WAVEFORM_INVERT_OUTPUT_CHANNEL_0 = TC_CTRLC_INVEN(1), 
+	TC_WAVEFORM_INVERT_OUTPUT_CHANNEL_1 = TC_CTRLC_INVEN(2),
+};
+
+---
+
+#  define NUMBER_OF_COMPARE_CAPTURE_CHANNELS TC3_CC8_NUM
+#define TC3_CC8_NUM                 2
+
+---
+
+#define TC_CTRLC_CPTEN_Pos             4          
+#define TC_CTRLC_CPTEN_Msk            (0x3u << TC_CTRLC_CPTEN_Pos)
+#define TC_CTRLC_CPTEN(value)         ((TC_CTRLC_CPTEN_Msk & ((value) << TC_CTRLC_CPTEN_Pos)))
+-->#define TC_CTRLC_CPTEN(value)    ( value  << 4)
+
+
+---------------------------------
+
+
+ tc_get_config_defaults(  *const config) 
+
+    /* Write default config to config struct */
+    config->clock_source               = GCLK_GENERATOR_0;
+    config->counter_size               = TC_COUNTER_SIZE_16BIT;
+    config->clock_prescaler            = TC_CLOCK_PRESCALER_DIV1;
+    config->wave_generation            = TC_WAVE_GENERATION_NORMAL_FREQ;
+    config->reload_action              = TC_RELOAD_ACTION_GCLK;
+    config->run_in_standby             = false;
+
+    config->waveform_invert_output     = TC_WAVEFORM_INVERT_OUTPUT_NONE;
+    config->enable_capture_on_channel[TC_COMPARE_CAPTURE_CHANNEL_0] = false;
+    config->enable_capture_on_channel[TC_COMPARE_CAPTURE_CHANNEL_1] = false;
+
+    config->count_direction            = TC_COUNT_DIRECTION_UP;
+    config->oneshot                    = false;
+
+    config->pwm_channel[TC_COMPARE_CAPTURE_CHANNEL_0].enabled = false;
+    config->pwm_channel[TC_COMPARE_CAPTURE_CHANNEL_0].pin_out = 0;
+    config->pwm_channel[TC_COMPARE_CAPTURE_CHANNEL_0].pin_mux = 0;
+
+    config->pwm_channel[TC_COMPARE_CAPTURE_CHANNEL_1].enabled = false;
+    config->pwm_channel[TC_COMPARE_CAPTURE_CHANNEL_1].pin_out = 0;
+    config->pwm_channel[TC_COMPARE_CAPTURE_CHANNEL_1].pin_mux = 0;
+
+    config->counter_16_bit.value                   = 0x0000;
+    config->counter_16_bit.compare_capture_channel[0] = 0x0000;
+    config->counter_16_bit.compare_capture_channel[1] = 0x0000;
+
+
+==================================
+
+enum tc_callback 
+{
+     TC_CALLBACK_OVERFLOW,
+     TC_CALLBACK_ERROR,
+     TC_CALLBACK_CC_CHANNEL0,
+     TC_CALLBACK_CC_CHANNEL1,
+     TC_CALLBACK_N, 
+};
+
+
+
+
+
+
+
+

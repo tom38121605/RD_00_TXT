@@ -1,0 +1,134 @@
+
+
+void powerkey_scan(void)
+{
+   
+   if( POWER_KEY_PIN)
+   {      
+      Timer0_Delay1ms(10); 
+      
+      if(POWER_KEY_PIN)           
+         flg_keydown10=1;             
+   }
+   
+   else if(!POWER_KEY_PIN)
+   {
+      if(flg_keydown10==1)      //add
+         Timer0_Delay1ms(10);
+      
+      if(!POWER_KEY_PIN)               
+         flg_keydown10 = 0;  
+   }      
+   
+}
+
+
+define SHORTPWKEYCOUNT  1  
+
+//#define LONGPWKEYCOUNT1  10
+//#define LONGPWKEYCOUNT1B 10    
+#define SHORTPWKEYCOUNT2  2
+#define SHORTPWKEYCOUNT2B 2    
+
+//#define LONGPWKEYCOUNT2 200  //5s+-
+//#define LONGPWKEYCOUNT2 130  //3s+-
+#define LONGPWKEYCOUNT2 50  //2s-
+
+void powerkey_check(void)
+{
+   static UINT8 flg_downlongkey1=0;
+   //static UINT32 ilongpowercount2=0;
+   
+   
+   if (flg_downlongkey1==0) 
+   {
+   
+      //powerkey
+      if (flg_keydown10) 
+      {
+         ikeynum10++;    
+         
+         //if(flg_power==0)
+         //{
+         //   if(ikeynum10>=SHORTPWKEYCOUNT2)
+         //     {ikeyvalue10 =2; flg_keycome10=1; flg_downlongkey1=1;}             
+         //}
+         //else
+         //{            
+         //   if(ikeynum10>=LONGPWKEYCOUNT2)
+         //      {ikeyvalue10 =3; flg_keycome10=1; flg_downlongkey1=1;} 
+         //}
+         
+         
+         if(ikeynum10>=LONGPWKEYCOUNT2)
+            {ikeyvalue10 =3; flg_keycome10=1; flg_downlongkey1=1;}          
+
+      }         
+      else
+      {   
+         
+         if (ikeynum10<1)   
+             ikeyvalue10 =0;         
+         else if (ikeynum10<SHORTPWKEYCOUNT2B)    
+             {ikeyvalue10 =1; flg_keycome10=1;}   
+         else if (ikeynum10<LONGPWKEYCOUNT2)
+             {ikeyvalue10 =2; flg_keycome10=1;}    
+         else          
+             {ikeyvalue10 =3; flg_keycome10=1;}               
+             
+      }       
+      
+   }
+   else
+   {
+
+      if (flg_keydown10==0) 
+      {                 
+         flg_downlongkey1=0; 
+         ikeynum10=0; ikeyvalue10=0;    
+      }       
+      
+   }   
+   
+}
+
+
+
+void powerkey_process(void)
+{      
+   
+   if (ikeyvalue10 == 1)  
+   {
+      ikeynum10=0; ikeyvalue10=0;  
+   }   
+   
+   //power on/off
+   if( (ikeyvalue10 == 2) || (ikeyvalue10 == 3) )  
+   {
+      ikeynum10=0; ikeyvalue10=0;  
+      
+      //--iputs0("pwr key2\r\n");
+      
+      if(flg_power==0)
+      { 
+         poweron();
+   
+      }      
+      else
+      {
+         //--poweroff();         
+         
+         if(flg_voicemode ==0)   //0 -- BT, 1 -- AUX
+            poweroff_BT();
+            //flg_poweroffBT = 1;
+         else              
+            poweroff_AUX_nosound();  
+            //flg_poweroffAux=1;         
+      }    
+
+   }  
+        
+}
+
+
+

@@ -1,0 +1,199 @@
+
+#define ADC                           (0x42004000UL) /**< \brief (ADC) APB Base Address */
+
+#define ADC_EXTCHANNEL_MSB             19       // Number of external channels
+#define ADC_INPUTCTRL_MUXPOS_Pos    0    
+
+
+#define PIN_PA02B_ADC_AIN0                 2L   
+#define MUX_PA02B_ADC_AIN0                 1L
+#define PINMUX_PA02B_ADC_AIN0      ((PIN_PA02B_ADC_AIN0 << 16) | MUX_PA02B_ADC_AIN0)
+#define PORT_PA02B_ADC_AIN0        (1ul <<  2) 
+
+#define PORT_WRCONFIG_PMUXEN_Pos    16           /**< \brief (PORT_WRCONFIG) Peripheral Multiplexer Enable */
+#define PORT_WRCONFIG_PMUXEN        (0x1ul << PORT_WRCONFIG_PMUXEN_Pos)
+
+---
+
+
+struct system_pinmux_config 
+{
+   uint8_t mux_position; 
+   enum system_pinmux_pin_dir direction; 
+   enum system_pinmux_pin_pull input_pull; 
+   bool powersave;
+};
+ 
+-------------------------
+
+#define ADC_AVGCTRL_SAMPLENUM_Pos   0  
+
+#define   ADC_AVGCTRL_SAMPLENUM_1_Val     0
+#define   ADC_AVGCTRL_SAMPLENUM_2_Val     1
+
+#define ADC_AVGCTRL_SAMPLENUM_1     (ADC_AVGCTRL_SAMPLENUM_1_Val   << ADC_AVGCTRL_SAMPLENUM_Pos)
+#define ADC_AVGCTRL_SAMPLENUM_2     (ADC_AVGCTRL_SAMPLENUM_2_Val   << ADC_AVGCTRL_SAMPLENUM_Pos)
+
+enum adc_accumulate_samples
+ {	
+    ADC_ACCUMULATE_DISABLE      = ADC_AVGCTRL_SAMPLENUM_1,	
+    ADC_ACCUMULATE_SAMPLES_2    = ADC_AVGCTRL_SAMPLENUM_2,
+}
+
+
+---
+
+#define ADC_AVGCTRL_ADJRES_Pos      4            
+#define ADC_AVGCTRL_ADJRES_Msk      (7 << ADC_AVGCTRL_ADJRES_Pos)
+
+#define ADC_AVGCTRL_ADJRES(value)   (value) << ADC_AVGCTRL_ADJRES_Pos)
+
+
+
+-------------------
+enum adc_reference     //adc参考电压
+{
+    ADC_REFERENCE_INT1V   = ADC_REFCTRL_REFSEL_INT1V,
+    ADC_REFERENCE_INTVCC0 = ADC_REFCTRL_REFSEL_INTVCC0,
+    ADC_REFERENCE_INTVCC1 = ADC_REFCTRL_REFSEL_INTVCC1,
+    ADC_REFERENCE_AREFA   = ADC_REFCTRL_REFSEL_AREFA,
+    ADC_REFERENCE_AREFB   = ADC_REFCTRL_REFSEL_AREFB,
+};
+
+
+struct adc_module 
+{ 
+    Adc     *hw;	
+    enum   adc_reference reference; 
+};
+
+
+typedef struct 
+{
+
+  __IO ADC_CTRLA_Type            CTRLA;       
+  __IO ADC_REFCTRL_Type          REFCTRL;     
+  __IO ADC_AVGCTRL_Type          AVGCTRL;   
+  __IO ADC_SAMPCTRL_Type         SAMPCTRL;    
+  __IO ADC_CTRLB_Type            CTRLB;      
+       RoReg8                    Reserved1[0x2];
+  __IO ADC_WINCTRL_Type          WINCTRL;     
+       RoReg8                    Reserved2[0x3];
+  __IO ADC_SWTRIG_Type           SWTRIG;     
+       RoReg8                    Reserved3[0x3];
+  __IO ADC_INPUTCTRL_Type        INPUTCTRL;   
+  __IO ADC_EVCTRL_Type           EVCTRL;      
+       RoReg8                    Reserved4[0x1];
+  __IO ADC_INTENCLR_Type         INTENCLR;    
+  __IO ADC_INTENSET_Type         INTENSET;    
+  __IO ADC_INTFLAG_Type          INTFLAG;    
+  __I  ADC_STATUS_Type           STATUS;     
+  __I  ADC_RESULT_Type           RESULT;     
+  __IO ADC_WINLT_Type            WINLT;     
+       RoReg8                    Reserved5[0x2];
+  __IO ADC_WINUT_Type            WINUT;       
+       RoReg8                    Reserved6[0x2];
+  __IO ADC_GAINCORR_Type         GAINCORR;   
+  __IO ADC_OFFSETCORR_Type       OFFSETCORR;  
+  __IO ADC_CALIB_Type            CALIB;       
+  __IO ADC_DBGCTRL_Type          DBGCTRL;     
+
+} Adc;
+
+-------------------------------------- 
+
+#define ADC_INPUTCTRL_MUXPOS_Pos    0    
+#define   ADC_INPUTCTRL_MUXPOS_PIN0_Val   0x0ul  
+#define ADC_INPUTCTRL_MUXPOS_PIN0   (ADC_INPUTCTRL_MUXPOS_PIN0_Val << ADC_INPUTCTRL_MUXPOS_Pos)
+    --> ADC_INPUTCTRL_MUXPOS_PIN0   (0 << 0)
+
+enum adc_positive_input 
+{
+    ADC_POSITIVE_INPUT_PIN0          = ADC_INPUTCTRL_MUXPOS_PIN0,
+    ADC_POSITIVE_INPUT_PIN1          = ADC_INPUTCTRL_MUXPOS_PIN1,
+
+    ......
+
+    ADC_POSITIVE_INPUT_DAC           = ADC_INPUTCTRL_MUXPOS_DAC,
+};
+
+struct adc_config
+ {
+    enum  gclk_generator                         clock_source;
+    enum  adc_reference                           reference;
+    enum  adc_clock_prescaler                  clock_prescaler;
+    enum  adc_resolution                          resolution;
+    enum  adc_gain_factor                        gain_factor; 
+    enum  adc_positive_input                     positive_input; 
+    enum  adc_negative_input                    negative_input; 
+    enum  adc_accumulate                        _samples accumulate_samples; 
+    enum  adc_divide_result                       divide_result; 
+
+    bool      left_adjust; 
+    bool      differential_mode; 
+    bool      freerunning; 
+    bool      run_in_standby;  
+    bool      reference_compensation_enable; 
+    uint8_t  sample_length; 
+
+    struct  adc_window_config                        window; 
+    struct  adc_correction_config                     correction; 
+    enum  adc_event_action                            event_action; 
+    struct  adc_pin_scan_config                        pin_scan;
+};
+
+
+---------------------------------------
+
+void adc_get_config_defaults(struct adc_config *const config)
+{
+    Assert(config);
+    config->clock_source                              = GCLK_GENERATOR_0;
+    config->reference                                  = ADC_REFERENCE_INT1V;
+    config->clock_prescaler                          = ADC_CLOCK_PRESCALER_DIV4;
+    config->resolution                                  = ADC_RESOLUTION_12BIT;
+    config->window.window_mode              = ADC_WINDOW_MODE_DISABLE;
+    config->window.window_upper_value     = 0;
+    config->window.window_lower_value     = 0;
+    config->gain_factor                               = ADC_GAIN_FACTOR_1X;
+  
+    config->positive_input                           = ADC_POSITIVE_INPUT_PIN0 ;     // 0<<0 
+    config->negative_input                         = ADC_NEGATIVE_INPUT_GND;  
+
+    config->accumulate_samples                = ADC_ACCUMULATE_DISABLE;
+    config->divide_result                            = ADC_DIVIDE_RESULT_DISABLE;
+    config->left_adjust                                = false;
+    config->differential_mode                    = false;
+    config->freerunning                             = false;
+    config->event_action                           = ADC_EVENT_ACTION_DISABLED;
+    config->run_in_standby                              = false;
+    config->reference_compensation_enable    = false;
+    config->correction.correction_enable         = false;
+    config->correction.gain_correction            = ADC_GAINCORR_RESETVALUE;
+    config->correction.offset_correction         = ADC_OFFSETCORR_RESETVALUE;
+    config->sample_length                             = 0;
+
+    config->pin_scan.offset_start_scan            = 0;
+    config->pin_scan.inputs_to_scan               = 0;
+}
+
+======
+
+#define ADC_INPUTCTRL_INPUTSCAN_Pos 16       
+#define ADC_INPUTCTRL_INPUTSCAN_Msk (0xFul << ADC_INPUTCTRL_INPUTSCAN_Pos)
+#define ADC_INPUTCTRL_INPUTOFFSET_Pos 20            
+#define ADC_INPUTCTRL_INPUTOFFSET_Msk (0xFul << ADC_INPUTCTRL_INPUTOFFSET_Pos)
+
+#define ADC_INTENCLR_MASK           0x0Ful   
+#define ADC_INTFLAG_MASK            0x0Ful 
+
+#define ADC_CTRLA_ENABLE_Pos        1           
+#define ADC_CTRLA_ENABLE            (0x1ul << ADC_CTRLA_ENABLE_Pos)
+
+#define ADC_SWTRIG_START_Pos        1     
+#define ADC_SWTRIG_START            (0x1ul << ADC_SWTRIG_START_Pos)
+
+#define ADC_STATUS_RESULT_READY  (1UL << 0)
+#define ADC_STATUS_OVERRUN       (1UL << 2)
+
+

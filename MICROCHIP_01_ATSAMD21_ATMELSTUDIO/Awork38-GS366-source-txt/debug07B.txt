@@ -1,0 +1,31 @@
+
+struct usart_config
+ {
+    enum usart_dataorder                   data_order;
+    enum usart_transfer_mode            transfer_mode;
+    enum usart_parity                         parity;
+    enum usart_stopbits                      stopbits;
+    enum usart_character_size            character_size;
+    enum usart_signal_mux_settings    mux_setting; 
+    enum usart_sample_rate                sample_rate; 
+    enum usart_sample_adjustment     sample_adjustment; 
+
+    bool             immediate_buffer_overflow_notification; 
+    bool             encoding_format_enable;
+    uint8_t         receive_pulse_length;  
+    bool             lin_slave_enable; 
+    bool             start_frame_detection_enable;  
+    bool             collision_detection_enable;
+    uint32_t        baudrate;
+    bool             receiver_enable;
+    bool             transmitter_enable;
+    bool            clock_polarity_inverted;
+    bool            use_external_clock;
+    uint32_t      ext_clock_freq;
+    bool           run_in_standby;
+    enum         gclk_generator generator_source;
+    uint32_t      pinmux_pad0;
+    uint32_t      pinmux_pad1;
+    uint32_t      pinmux_pad2;
+    uint32_t      pinmux_pad3;
+};

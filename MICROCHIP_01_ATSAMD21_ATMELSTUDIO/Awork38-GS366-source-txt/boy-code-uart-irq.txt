@@ -1,0 +1,246 @@
+void SERCOM0_Handler(void)
+{
+    uint8_t temp = 0;
+    if(REG_SERCOM0_USART_INTFLAG & (1<<1))//tx complete
+    {
+        REG_PORT_OUTCLR0 = PORT_PA06;//TX DISABLE
+        message_requested = true;
+    }
+    else//rx complete
+    {
+        if(REG_SERCOM0_USART_STATUS & 0b110)//check for frame and buffer overflow error
+        {
+            //dummy read skip this data point
+            temp = REG_SERCOM0_USART_DATA;
+            REG_SERCOM0_USART_CTRLB &= ~(1<<17); //disable receiver
+            //REG_SERCOM0_USART_STATUS |= 0b110; //clear errors, write '1' to any error
+            Hall_Reset = true;
+        }
+        else if(message_requested == false)
+        {
+            temp = REG_SERCOM0_USART_DATA;
+        }
+        else
+        {
+            Hall_index++;
+            Hall_index = Hall_index % sizeof_Hall_buffer;
+            Hall_data[Hall_index] = REG_SERCOM0_USART_DATA;
+            Plant.lastfeedback = Plant.feedback;
+            Plant.feedback = Hall_data[Hall_index];
+            Plant.new_feedback = true;
+        }
+    }
+    REG_SERCOM0_USART_INTFLAG = 0xff;//clear interrupts
+}
+
+void ADC_Handler(void)//every 910us
+{
+        while(REG_ADC_STATUS);
+        REG_ADC_INTFLAG = 0xf;    
+        ADC_index++;
+        ADC_index = ADC_index % sizeof_ADC_buffer;
+        while(REG_ADC_STATUS);
+        ADC_data[ADC_index] = REG_ADC_RESULT;
+        Current.feedback = ADC_data[ADC_index];
+        Current.new_feedback = true;
+        while(REG_DAC_STATUS);
+        REG_DAC_DATA = Plant.feedback*775/256;    
+}
+
+void TC3_Handler(void)//1ms timer
+{
+    if(REG_TC3_INTFLAG & (1<<4))//CC0 or 1ms loop
+    {
+        message_requested = false;
+        if(startupcounter < 16000) startupcounter++;
+        if(Plant.new_feedback == true)
+        {
+            if(Current.new_feedback == true)
+            {
+                updateControl = true;
+                Current.new_feedback = false;
+                Plant.new_feedback = false;
+                Turn_HallComm_Error_signal_off();
+                Hall_error_counter = 0;
+            }
+        }
+        else if (startupcounter > 15000)//don't throw error during startup
+        {
+            Hall_error_counter++;
+            if(Hall_error_counter > 3)
+            {
+                Turn_HallComm_Error_signal_on();
+                Hall_error_counter = 0;
+            }
+            updateControl = false;
+            
+        }
+    }
+    else if(REG_TC3_INTFLAG & (1<<5))//CC1 ~60us before 1ms loop
+    {
+        REG_PORT_OUTSET0 = PORT_PA06;//TX ENABLE
+        REG_SERCOM0_USART_DATA = 'n';        
+    }
+    REG_TC3_INTFLAG = 0xFF; //clear all interrupts flags
+}
+
+int main(void)
+{
+    __disable_irq();
+    atmel_start_init();
+    USART0Configure();
+    USARTConfigure();
+    ADC_Configure();
+    DAC_Configure();
+    Timer_Configure();
+    Turn_HallComm_Error_signal_off();
+    __enable_irq();
+    display_Intro(4000);
+    initiliaze_PID_data();
+    init_levitation();
+    
+    while (1) 
+    {
+        //check_errors();
+        if(Hall_Reset)
+            {
+                Hall_Reset = false;
+                REG_SERCOM0_USART_CTRLA = 0;//disable
+                while(REG_SERCOM0_USART_SYNCBUSY);
+                REG_SERCOM0_USART_CTRLA = (1<<2) | (1<<30) | (1<<20) | (1<<7) | (2<<22); //internal clock mode, LSB transmitted first,    PAD1(PA5) for RX PAD0(PA4) for TX
+                REG_SERCOM0_USART_BAUD = 60070;
+                REG_SERCOM0_USART_INTENSET = (1<<2);//receive complete
+                NVIC_EnableIRQ(SERCOM0_IRQn);
+                NVIC_SetPriority(SERCOM0_IRQn,0);
+                while(REG_SERCOM0_USART_SYNCBUSY);
+                REG_SERCOM0_USART_CTRLB = (1<<16) | (1<<17); //enable rx and disable tx
+                while(REG_SERCOM0_USART_SYNCBUSY);
+                REG_SERCOM0_USART_STATUS = 0;
+                REG_SERCOM0_USART_INTFLAG = 0xff;
+                REG_SERCOM0_USART_CTRLA |= (1<<1); //enable    
+                while(REG_SERCOM0_USART_SYNCBUSY);    
+            }
+        if(updateControl == true)// 1ms loop
+        {
+            updateControl = false;        
+            switch (state)
+            {
+                case levoff :
+                    set_duty_cycle(0);
+                    gpio_set_pin_level(PA20,false);
+                    check_user_commands();
+                    Turn_stable_signal_off();
+                    foundTop = false;
+                    foundBottom = false;
+                    top_pos = 0;
+                    bottom_pos = 0;
+                    if( is_ON_Signal() || Levitate_Command == true)
+                    {
+                        state = findlimits;
+                        init_levitation();
+                    }
+                break;
+                case findlimits:
+                    find_hardstops();
+                break;
+                case softstart :
+                    step_from_rail();
+                break;
+                case softstop :
+                    step_to_rail();
+                break;
+                case levitate:
+                    if(is_OFF_Signal() && (Levitate_Command == false))
+                    {
+                        state = softstop;
+                    }
+                    
+                    if(!isInRange((bottom_pos + emergency_lev_window),(top_pos - emergency_lev_window),Plant.feedback))
+                    {
+                        bounce_counter++;
+                    }
+                    else bounce_counter = 0;
+                    if(bounce_counter > 60)
+                    {
+                        bounce_counter = 0;
+                        Turn_stable_signal_off();
+                    }
+                    PI_Current_Control(PID_Plant_Control(Plant.setpoint));
+                    adjust_Pos_Setpoint();
+                    //user_display_Runtime();
+                break;
+                case fault:
+                if(is_OFF_Signal())
+                {
+                    state = levoff;
+                    clear_errors();
+                }
+                break;
+                default:
+                state = levoff;
+            }
+        }
+    }
+}
+
+void Timer_Configure(void)
+{
+    GCLK->CLKCTRL.reg = GCLK_CLKCTRL_ID_TCC2_TC3_Val;    // select TC3 peripheral channel
+    GCLK->CLKCTRL.reg |= GCLK_CLKCTRL_GEN_GCLK0;        // select source GCLK_GEN[0]
+    GCLK->CLKCTRL.bit.CLKEN = 1;            // enable TC3 generic clock
+    REG_PM_APBCMASK |= (1<<11);//enable bus clock to TC3
+    REG_TC3_COUNT16_CC0 = 188;//1ms
+    REG_TC3_COUNT16_CC1 = 158;// before 1ms timer//170
+    while(REG_TC3_STATUS & (1<<7));
+    REG_TC3_CTRLA |= (1<<12) | (0x6<<8) | (0x1<<5);//set presync on prescaler, prescaler/256, matched frequency
+    while(REG_TC3_STATUS & (1<<7));
+    REG_TC3_INTENSET = (1<<4) | (1<<5) | (1<<0);//enable match & overflow interrupt
+    REG_TC3_INTFLAG = 0xFF; //clear all flags
+    NVIC_EnableIRQ(TC3_IRQn);
+    NVIC_SetPriority(TC3_IRQn,1);
+    REG_TC3_CTRLA |= (1<<1); //Enable    
+}
+void USART0Configure(void)
+{
+    //Clocks
+    GCLK->CLKCTRL.reg = GCLK_CLKCTRL_ID_SERCOM0_CORE_Val;    // select SERCOM0 peripheral channel
+    GCLK->CLKCTRL.reg |= GCLK_CLKCTRL_GEN_GCLK0;        // select source GCLK_GEN[0]
+    GCLK->CLKCTRL.bit.CLKEN = 1;            // enable SERCOM0 generic clock
+    REG_PM_APBCMASK |= (1<<2);//enable bus clock to SERCOM0
+    GCLK->CLKCTRL.reg = GCLK_CLKCTRL_ID_SERCOMX_SLOW_Val;    // select SERCOM0 peripheral channel
+    GCLK->CLKCTRL.reg |= GCLK_CLKCTRL_GEN_GCLK1;        // select source GCLK_GEN[0]
+    GCLK->CLKCTRL.bit.CLKEN = 1;            // enable SERCOM0 generic clock
+    //IO for PA5(RX) and PA4(TX)
+    PORT->Group[0].PINCFG[5].bit.PMUXEN = 1;
+    REG_PORT_DIRCLR0 = PORT_PA05; //set as input
+    PORT->Group[0].PINCFG[4].bit.PMUXEN = 1;
+    REG_PORT_DIRSET0 = PORT_PA04; //set as output
+    REG_PORT_PMUX2 =  (0x3<<4) | (0x3<<0);//set both alternate functions
+    //Peripheral
+    //internal clock mode, LSB transmitted first,    PAD1(PA5) for RX PAD0(PA4) for TX, IBON enabled
+    REG_SERCOM0_USART_CTRLA = (1<<2) | (1<<30) | (1<<20) | (1<<7) | (1<<8) | (2<<22); 
+    REG_SERCOM0_USART_BAUD = 60070;//60070 for 250k//54607 for 500k
+    REG_SERCOM0_USART_INTENSET = (1<<2) | (1<<1);//receive complete and transmit complete
+    NVIC_EnableIRQ(SERCOM0_IRQn);
+    NVIC_SetPriority(SERCOM0_IRQn,0);
+    while(REG_SERCOM0_USART_SYNCBUSY);
+    REG_SERCOM0_USART_CTRLB = (1<<16) | (1<<17); //enable rx and enable tx
+    while(REG_SERCOM0_USART_SYNCBUSY);
+    REG_SERCOM0_USART_CTRLA |= (1<<1); //enable
+    while(REG_SERCOM0_USART_SYNCBUSY);
+    
+}
+
+
+
+================================
+
+Should be 167 = 0xA7 = 10100111
+Getting    79 = 0x4f =  01001111
+
+-----------
+
+事实证明，切换到DPLL解决了问题。
+
+有很多方法可以检查，我使用的是ASF，所以他们可能在内部做了一些错误的事情，但是我在其他一些论坛上被提示使用了这个解决方案，所以其他人正在努力解决这个问题，它没有出现在勘误表中，所以我猜是ASF。我开始使用ASF，现在90%的ASF已经被放弃并重写了。。。。
+

@@ -1,0 +1,338 @@
+ 
+
+=================初始化adc========================
+
+
+flow：
+
+   main --> configure_adc --> adc_init --> _adc_set_config --> _adc_set_config  -->  adc_enable 
+ 
+
+--------------------------
+
+int main
+
+  configure_adc();
+
+
+-----------------------
+ 
+ configure_adc(void)
+ 
+    struct  adc_config     config_adc;
+ 
+    //设置adc初始值
+    adc_get_config_defaults(&config_adc);  
+
+    //配置adc初始化
+    adc_init(&adc_instance, ADC, &config_adc);  
+
+    //开启adc
+    adc_enable(&adc_instance); 
+ 
+
+-------------------
+
+//开启adc
+参数：adc_instance  （adc句柄）
+ status_code   adc_enable( adc_module   *module_inst)
+
+    adc_module = module_inst->hw;
+
+    // Disbale interrupt 
+    adc_module->INTENCLR.reg = ADC_INTENCLR_MASK;    //bit0-3=0x0F  //关闭所有adc中断
+
+    // 清除中断事件标志 
+    adc_module->INTFLAG.reg = ADC_INTFLAG_MASK;        //bit0-3=0x0F  // 清除中断事件标志 
+
+    adc_module->CTRLA.reg |= ADC_CTRLA_ENABLE;            //1<<1  //开启adc
+
+
+
+-------------------------------------
+
+配置adc之一：
+
+参数1：ADC
+参数2：config_adc
+输出：module_inst
+ adc_init(   adc_module *module_inst,    Adc *hw,     *config)
+
+    module_inst->hw = hw;
+
+   //设置adc时钟，先跳过
+   system_apb_clock_set_mask(SYSTEM_CLOCK_APB_APBC, PM_APBCMASK_ADC);
+
+   if (hw->CTRLA.reg & ADC_CTRLA_SWRST)    //adc忙
+      return STATUS_BUSY; 
+
+   if (hw->CTRLA.reg & ADC_CTRLA_ENABLE)    //adc出错
+      return STATUS_ERR_DENIED;
+ 
+   module_inst->reference = config->reference;
+
+   //设置adc参考电压
+   if (module_inst->reference == ADC_REFERENCE_INT1V) 
+      system_voltage_reference_enable(SYSTEM_VOLTAGE_REFERENCE_BANDGAP);
+
+
+   配置adc之二：
+   return _adc_set_config(module_inst, config);
+
+----------------------------------
+
+配置adc之二：
+
+参数1：config_adc
+输出：module_inst
+status_code   _adc_set_config( adc_module *module_inst, adc_config *config)
+{
+    uint8_t adjres = 0;
+    uint32_t resolution = ADC_RESOLUTION_16BIT;
+    enum adc_accumulate_samples accumulate = ADC_ACCUMULATE_DISABLE;
+
+    Adc  *adc_module = module_inst->hw;         //ADC
+
+    // Configure GCLK  (先跳过)
+    struct   system_gclk_chan_config    gclk_chan_conf;
+    system_gclk_chan_get_config_defaults(&gclk_chan_conf);
+    gclk_chan_conf.source_generator = config->clock_source;
+    system_gclk_chan_set_config(ADC_GCLK_ID, &gclk_chan_conf);
+    system_gclk_chan_enable(ADC_GCLK_ID);
+
+    //设置adc引脚
+   
+        _adc_configure_ain_pin(config->positive_input);
+        _adc_configure_ain_pin(config->negative_input);
+   
+
+    //设置adc中休眠模式下不工作
+    adc_module->CTRLA.reg = (config->run_in_standby << ADC_CTRLA_RUNSTDBY_Pos);  //0<<2  //休眠模式不工作
+
+    //设置参考电压
+    adc_module->REFCTRL.reg = （0 << 7）| 0; //bit7=0 不需要补偿，bit0-4=0000 选内部1v参考电压
+
+    //设置adc精度
+    switch (config->resolution)  
+    case ADC_RESOLUTION_12BIT:
+        resolution = ADC_RESOLUTION_12BIT;
+        break; 
+ 
+
+    adc_module->AVGCTRL.reg = 0 | 0;  //bit6-4=0 表示12位精度， bit0-3=0，表示只有1路adc采样
+
+    /* Check validity of sample length value */
+    adc_module->SAMPCTRL.reg =0<< 0;  //bit0-5=0;  //0表示采样最快
+
+    while (adc_is_syncing(module_inst)) ;  //等等adc完成
+
+    //CTRLB
+    adc_module->CTRLB.reg =
+            config->clock_prescaler |                     //预分频DIV4
+            resolution |                                          //12位精度
+            (0 << ADC_CTRLB_CORREN_Pos) |        //不做修正
+            (0<< ADC_CTRLB_FREERUN_Pos) |                             //单次触发
+            (0 << ADC_CTRLB_LEFTADJ_Pos) |                                 //右对齐
+            (0 << ADC_CTRLB_DIFFMODE_Pos);                            //单端模式（非差分）
+
+
+    // Configure window mode 
+    adc_module->WINCTRL.reg = config->window.window_mode;  //BIT0-2=0  //设置为没有窗口模式 
+    adc_module->WINLT.reg =   0 << ADC_WINLT_WINLT_Pos;     //窗口最低阈值
+    adc_module->WINUT.reg = 0 <<  ADC_WINUT_WINUT_Pos;   //窗口最高阈值
+
+    inputs_to_scan = config->pin_scan.inputs_to_scan;                   //0
+    if (inputs_to_scan > 0)  //0
+        // Number of input sources included is the value written to INPUTSCAN plus 1.
+        inputs_to_scan--;
+ 
+    if (inputs_to_scan > (0x0f >> 16) || config->pin_scan.offset_start_scan > (0x0f >> 20))  
+         return STATUS_ERR_INVALID_ARG;
+ 
+
+    //设置正负引脚
+    adc_module->INPUTCTRL.reg =
+            config->gain_factor |     //增益 1x
+            (config->pin_scan.offset_start_scan <<   ADC_INPUTCTRL_INPUTOFFSET_Pos) |    //0<<20
+            ( inputs_to_scan << ADC_INPUTCTRL_INPUTSCAN_Pos) |                                     //0<<16
+            config->negative_input |        //GND      //bit12-8=0x18
+            config->positive_input;          //AIN0      //bit4-0=0
+
+    adc_module->EVCTRL.reg = 0;   //屏蔽所有事件
+
+    //清中断标志
+    adc_module->INTENCLR.reg =
+            (1 << ADC_INTENCLR_SYNCRDY_Pos) | (1 << ADC_INTENCLR_WINMON_Pos) |
+            (1 << ADC_INTENCLR_OVERRUN_Pos) | (1 << ADC_INTENCLR_RESRDY_Pos);
+
+            // Set offset correction value
+            adc_module->OFFSETCORR.reg = 0 <<  ADC_OFFSETCORR_OFFSETCORR_Pos;
+
+
+    // Load in the fixed device ADC calibration constants    //关于校准值--待理解 
+    adc_module->CALIB.reg =
+       ADC_CALIB_BIAS_CAL(  (*(uint32_t *)ADC_FUSES_BIASCAL_ADDR >> ADC_FUSES_BIASCAL_Pos) ) |
+       ADC_CALIB_LINEARITY_CAL( (*(uint64_t *)ADC_FUSES_LINEARITY_0_ADDR >> ADC_FUSES_LINEARITY_0_Pos) );
+
+ 
+
+-----------------
+
+功能：配置adc引脚之1    ok
+输入参数： 0
+_adc_configure_ain_pin(uint32_t pin)
+{
+
+   // Pinmapping table  
+   uint32_t pinmapping[] = 
+   { 
+            PIN_PA02B_ADC_AIN0,  PIN_PA03B_ADC_AIN1,
+            PIN_PB08B_ADC_AIN2,  PIN_PB09B_ADC_AIN3,
+            PIN_PA04B_ADC_AIN4,  PIN_PA05B_ADC_AIN5,
+            PIN_PA06B_ADC_AIN6,  PIN_PA07B_ADC_AIN7,
+            PIN_PB00B_ADC_AIN8,  PIN_PB01B_ADC_AIN9,
+            PIN_PB02B_ADC_AIN10, PIN_PB03B_ADC_AIN11,
+            PIN_PB04B_ADC_AIN12, PIN_PB05B_ADC_AIN13,
+            PIN_PB06B_ADC_AIN14, PIN_PB07B_ADC_AIN15,
+            PIN_PA08B_ADC_AIN16, PIN_PA09B_ADC_AIN17,
+            PIN_PA10B_ADC_AIN18, PIN_PA11B_ADC_AIN19, 
+    };
+
+    if (pin <= ADC_EXTCHANNEL_MSB)   //0<19
+   {
+        pin_map_result = pinmapping[pin >> ADC_INPUTCTRL_MUXPOS_Pos];  //0>>0  //PIN_PA02B_ADC_AIN0
+
+        //struct system_pinmux_config config;
+        //system_pinmux_get_config_defaults(&config);
+    config->mux_position = SYSTEM_PINMUX_GPIO;                //1<<7
+    config->direction    = SYSTEM_PINMUX_PIN_DIR_INPUT;
+    config->input_pull   = SYSTEM_PINMUX_PIN_PULL_UP;
+    config->powersave    = false;
+
+        /* Analog functions are all on MUX setting B */
+        config.input_pull   = SYSTEM_PINMUX_PIN_PULL_NONE;
+        config.mux_position = 1;
+
+        //system_pinmux_pin_set_config(pin_map_result, &config);
+            _system_pinmux_config(0, 2, config);
+    }
+ 
+---
+
+功能：配置adc引脚之二  ok
+
+输入参数1： 0
+输入参数2： 2
+_system_pinmux_config(PortGroup *port, uint32_t pin_mask, system_pinmux_config *const config)
+ 
+    uint32_t pin_cfg = 0;
+
+    if (!config->powersave) 
+   
+        if (config->mux_position != SYSTEM_PINMUX_GPIO)     //如果不是普通io口
+      
+            pin_cfg |= PORT_WRCONFIG_PMUXEN;                                               //1<<16
+            pin_cfg |= (config->mux_position << PORT_WRCONFIG_PMUX_Pos);   //1<<24
+       
+
+        //如果是输入脚
+        if ((config->direction == SYSTEM_PINMUX_PIN_DIR_INPUT) ||   (config->direction == SYSTEM_PINMUX_PIN_DIR_OUTPUT_WITH_READBACK)) {
+
+            pin_cfg |= PORT_WRCONFIG_INEN;
+
+            //如果有上下拉 
+            if (config->input_pull != SYSTEM_PINMUX_PIN_PULL_NONE)  
+                pin_cfg |= PORT_WRCONFIG_PULLEN;             
+
+            //清dir output
+            port->DIRCLR.reg = pin_mask;
+       
+
+        //如果是输出
+        if ((config->direction == SYSTEM_PINMUX_PIN_DIR_OUTPUT) || (config->direction == SYSTEM_PINMUX_PIN_DIR_OUTPUT_WITH_READBACK)) 
+            pin_cfg &= ~PORT_WRCONFIG_PULLEN; //清上下拉的enable
+
+   else //power save   
+        //清dir output
+        port->DIRCLR.reg = pin_mask;
+ 
+    //把pin_mask的值分别写入到寄存器WRCONFIG的高低字节中去
+    lower_pin_mask = (pin_mask & 0xFFFF);
+    upper_pin_mask = (pin_mask >> 16);
+
+    port->WRCONFIG.reg
+        = (lower_pin_mask << PORT_WRCONFIG_PINMASK_Pos) |
+            pin_cfg | PORT_WRCONFIG_WRPMUX | PORT_WRCONFIG_WRPINCFG;
+
+    port->WRCONFIG.reg
+        = (upper_pin_mask << PORT_WRCONFIG_PINMASK_Pos) |
+            pin_cfg | PORT_WRCONFIG_WRPMUX | PORT_WRCONFIG_WRPINCFG |
+            PORT_WRCONFIG_HWSEL;
+ 
+    if (pin_cfg & PORT_WRCONFIG_PULLEN)  
+         
+            if (config->input_pull == SYSTEM_PINMUX_PIN_PULL_UP) 
+                port->OUTSET.reg = pin_mask;
+            else  
+                port->OUTCLR.reg = pin_mask;           
+       
+
+        //如果是dir output
+        if ((config->direction == SYSTEM_PINMUX_PIN_DIR_OUTPUT) ||    (config->direction == SYSTEM_PINMUX_PIN_DIR_OUTPUT_WITH_READBACK)) {
+            port->DIRSET.reg = pin_mask;
+     
+
+
+======================读取adc===========================
+
+
+flow：
+
+main  --> adc_start_conversion -->  -->  -->  -->  -->  -->  -->  -->  -->  
+
+main  --> adc_start_conversion --> adc_read -->  -->  -->  -->  -->  -->  -->  -->  
+ 
+
+
+------------------------------------------
+
+int main
+ 
+    //启动adc转换
+    //adc_start_conversion(&adc_instance);
+         adc_module->SWTRIG.reg |= ADC_SWTRIG_START;   //bit.1=1   //启动adc转换
+ 
+    while (adc_read(&adc_instance, &result) == STATUS_BUSY);
+
+
+---------------------
+
+adc_read( adc_module   *module_inst,  *result)
+ 
+ 
+    if (!(adc_get_status(module_inst) & ADC_STATUS_RESULT_READY))    //INTFLAG.0！=1 //adc忙，里面没有值可读取
+        return STATUS_BUSY; 
+
+    Adc *const adc_module = module_inst->hw;
+ 
+
+    //读取adc的值
+    *result = adc_module->RESULT.reg;
+
+    //清除转换标志
+    adc_clear_status(module_inst, ADC_STATUS_RESULT_READY);
+
+    if (adc_get_status(module_inst) & ADC_STATUS_OVERRUN)      //INTFLAG.2！=1，返回溢出错误
+        adc_clear_status(module_inst, ADC_STATUS_OVERRUN);
+        return STATUS_ERR_OVERFLOW;
+ 
+
+ 
+
+
+
+
+
+ 
+
+
