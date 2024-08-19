@@ -1,0 +1,210 @@
+﻿
+
+
+1. 如何计算定时时间 
+
+    因是3分频，实际频率= freq/3
+
+    1秒对应的count   --  实际频率
+
+    0.1秒对应的count   --  实际频率/10
+
+
+=======================timer 初始化===========================
+
+
+flow： 
+
+main --> BOARD_InitBootPins --> BOARD_InitDebugConsole -->  
+ 
+
+-------------------------------------------------------------------------------------------
+
+
+main()
+
+    //跟其他项目一样，先跳过
+    BOARD_ConfigMPU();          //--same
+
+    //跟其他项目一样，先跳过
+    BOARD_InitBootClocks();     //--same
+
+
+    //初始化uart引脚P1.09 P1.10        //--same
+    //BOARD_InitBootPins();
+          BOARD_InitPins();
+
+    //取得定时器GPT2的默认参数
+    GPT_GetDefaultConfig(&gptConfig);
+
+   //功能: 使能GPT2的时钟为常开（进入WAIT时也开）；GPT 软件复位；比较后计数清0；
+      在wait模式，停止模式都使能，在休眠模式, debug模式都不使能；
+      不使能GPT2后计时器清0，设置GPT2的时钟源为PeriphFreq，分频系数为1分频。
+    GPT_Init(GPT2, &gptConfig);
+
+    //重新设置GPT2为3分频
+    GPT_SetClockDivider(GPT2, 3);     //PR.11-0=(3-1)=2
+
+    //取得PerCLK时钟频率
+    //gptFreq = EXAMPLE_GPT_CLK_FREQ;
+    //       gptFreq = CLOCK_GetFreq(kCLOCK_PerClk);
+               gptFreq = CLOCK_GetFreq(2)=CLOCK_GetIpgFreq();
+
+    gptFreq /= 3;
+
+    //设置channel1的计数器比较值 （计数值到达这个值就会触发定时器的中断）
+    //GPT_SetOutputCompareValue(GPT2, 0, gptFreq);
+    //         OCR[0] =gptFreq;
+                OCR1 =gptFreq;    //channel1的计数器比较值
+
+    //使能GPT2的channel1的比较中断 （子中断）
+    //GPT_EnableInterrupts(GPT2,1);
+            IR |= 1<<0;   //使能GPT2的channel1的比较中断
+
+    // 使能所有的GPT2的中断(总中断) （包括channel1的比较中断）
+    //EnableIRQ(31);
+    //     NVIC_EnableIRQ(31);                  //P40页       
+                   NVIC->ISER[0] =1<< (31);   // 使能所有的GPT2的中断 （包括channel1的比较中断）
+
+    //启动GPT2计数  (待验证)
+    //GPT_StartTimer(GPT2);
+         CR |= (1<<0);
+
+
+----------------------------------------------
+
+参数：kCLOCK_PerClk
+CLOCK_GetFreq( name)
+
+    switch (name)
+
+        。。。
+
+        case kCLOCK_PerClk:
+            freq = CLOCK_GetPerClkFreq();
+            break;
+
+    return freq;
+
+
+-----
+
+//取得PerCLK
+CLOCK_GetPerClkFreq( )
+
+    //取得PerCLK的源时钟
+    if (CSCMR1.6==1)
+        freq = CLOCK_GetOscFreq();      // Osc_clk ---> PER Clock 
+    else
+        freq = CLOCK_GetIpgFreq();      // Periph_clk ---> AHB Clock ---> IPG Clock ---> PER Clock
+
+    //freq /= (((CCM->CSCMR1 & CCM_CSCMR1_PERCLK_PODF_MASK) >> CCM_CSCMR1_PERCLK_PODF_SHIFT) + 1U);
+           freq  =freq /(CSCMR1.5-0+1); 
+
+
+    return freq;
+
+
+----------------------------------------------------
+
+//功能: 使能GPT2的时钟为常开（进入WAIT时也开）；GPT 软件复位；比较后计数清0；
+   在wait模式，停止模式都使能，在休眠模式, debug模式都不使能；
+   不使能GPT2后计时器清0，设置GPT2的时钟源为PeriphFreq，分频系数为1分频。
+//参数 GPT2，gptConfig
+GPT_Init( *base,   *initConfig)
+ 
+    //使能GPT2的时钟, 设置CCGR?.3-2=3，时钟模式为常开（进入WAIT时也开）  ；
+    CLOCK_EnableClock( s_gptClocks[GPT_GetInstance(base)] );
+
+    base->CR = 0;
+
+    //GPT2 软件复位
+    //GPT_SoftwareReset(base);
+        base->CR |= (1<<15);   //CR.15=1,  启动GPT2软复位
+        while (CR.15= 1);
+
+    //GPT2参数设置
+    CR.9 = initConfig->enableFreeRun;          //0, 触发比较后计数清0（restart mode） 
+    CR.3= initConfig->enableRunInWait         //1, 在在wait模式使能
+    CR.5 = initConfig->enableRunInStop;        // 1, 在Stop模式使能
+    CR.4 = 0initConfig->enableRunInDoze;      // 0, 在休眠模式不使能
+    CR.2 = initConfig->enableRunInDbg;         // 0, 在debug模式不使能
+    CR.1 = initConfig->enableMode;               // 1, 不使能GPT2后计时器清0
+
+
+    //CR.8-6 = 001, 设置GPT的时钟源为PeriphFreq
+    //GPT_SetClockSource(base,kGPT_ClockSource_LowFreq);
+          if (gptClkSource == kGPT_ClockSource_Osc)  //1不等于5
+          else
+                CR &=  ~(GPT_CR_CLKSRC_MASK | GPT_CR_EN_24M_MASK) ；   //CR.10,8-6=0,000
+                CR |=  GPT_CR_CLKSRC(gptClkSource)；   //CR.8-6 =001,  PeriphFreq clock
+
+
+    //PR.11-0=0, 设置GPT2的分频系数为1分频
+    GPT_SetClockDivider(base, 1);
+         //base->PR = (base->PR & ~GPT_PR_PRESCALER_MASK) | GPT_PR_PRESCALER(divider - 1U);
+               PR &=   ~GPT_PR_PRESCALER_MASK          //PR.11-0=0
+               PR |=GPT_PR_PRESCALER(divider - 1);          //PR.11-0=(1-1)=0
+
+
+
+
+=======================timer 定时响应中断===========================
+
+
+
+flow： 
+
+比较中断 --> EXAMPLE_GPT_IRQHandler 
+ 
+
+-------------------------------------------------------------------------------------------
+
+
+main()
+
+
+   while（1)
+
+        if (1 == gptIsrFlag)
+
+            PRINTF("\r\n GPT interrupt is occurred !");
+            gptIsrFlag = false;
+
+        else
+            __WFI();
+
+
+
+
+----------------------------------------------
+
+
+ EXAMPLE_GPT_IRQHandler( )
+ 
+    //清除中断标志(compare1)
+    GPT_ClearStatusFlags(GPT2, 1<<0 );
+         SR = 1<<0;
+
+    gptIsrFlag = true;
+
+     __DSB();  //避免重复中断
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

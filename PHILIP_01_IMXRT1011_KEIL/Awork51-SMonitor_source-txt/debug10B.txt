@@ -1,0 +1,174 @@
+﻿
+
+typedef enum _lpm_power_mode
+{
+    LPM_PowerModeOverRun = 0,       // A
+    LPM_PowerModeFullRun,               // B
+    LPM_PowerModeLowSpeedRun,     // C
+    LPM_PowerModeLowPowerRun,      // D
+
+    LPM_PowerModeRunEnd = LPM_PowerModeLowPowerRun,
+ 
+
+-------------------唤醒分割线------------hook 分割线---------------------------------
+
+
+    LPM_PowerModeSysIdle,         //E
+
+    PowerModeLPIdle,  
+ 
+    LPM_PowerModeSuspend, 
+
+    LPM_PowerModeSNVS,  
+
+    LPM_PowerModeEnd = LPM_PowerModeSNVS
+} lpm_power_mode_t;
+
+
+=====================================
+
+
+#define LPUART_FIFO_RXUF_MASK                    (0x10000U)
+#define LPUART_FIFO_RXUF_SHIFT                   (16U)
+
+#define LPUART_FIFO_TXOF_MASK                    (0x20000U)
+#define LPUART_FIFO_TXOF_SHIFT                   (17U)
+
+#define LPUART_FIFO_RXEMPT_MASK                  (0x400000U)
+#define LPUART_FIFO_RXEMPT_SHIFT                 (22U)
+
+#define LPUART_FIFO_TXEMPT_MASK                  (0x800000U)
+#define LPUART_FIFO_TXEMPT_SHIFT                 (23U)
+
+#define LPUART_STAT_TC_MASK                      (0x400000U)
+#define LPUART_STAT_TC_SHIFT                      (22U)
+
+
+enum _lpuart_flags
+{
+     kLPUART_TransmissionCompleteFlag =   (LPUART_STAT_TC_MASK), 
+
+     。。。
+
+}
+
+
+  GPIO1_Combined_0_15_IRQn     = 70,     
+
+#define GPT_IR_OF1IE_MASK                        (0x1U)
+#define GPT_IR_OF1IE_SHIFT                       (0U)
+#define GPT_IR_OF1IE(x)                          (((uint32_t)(((uint32_t)(x)) << GPT_IR_OF1IE_SHIFT)) & GPT_IR_OF1IE_MASK)
+#define APP_WAKEUP_BUTTON_GPIO        GPIO1
+#define APP_WAKEUP_BUTTON_GPIO_PIN    0
+#define APP_WAKEUP_BUTTON_IRQ         GPIO1_Combined_0_15_IRQn
+#define APP_WAKEUP_BUTTON_IRQ_HANDLER GPIO1_Combined_0_15_IRQHandler
+#define APP_WAKEUP_BUTTON_NAME        BOARD_USER_BUTTON_NAME
+
+
+  #define NVIC_EnableIRQ              __NVIC_EnableIRQ
+  #define NVIC_EnableIRQ              __NVIC_EnableIRQ
+ #define NVIC_ClearPendingIRQ        __NVIC_ClearPendingIRQ
+
+#define APP_WAKEUP_GPT_BASE         GPT2
+#define APP_WAKEUP_GPT_IRQn         GPT2_IRQn   //31
+#define APP_WAKEUP_GPT_IRQn_HANDLER GPT2_IRQHandler
+
+
+typedef enum _gpt_interrupt_enable
+{
+    kGPT_OutputCompare1InterruptEnable = GPT_IR_OF1IE_MASK,   /*!< Output Compare Channel1 interrupt enable*/
+    kGPT_OutputCompare2InterruptEnable = GPT_IR_OF2IE_MASK,   /*!< Output Compare Channel2 interrupt enable*/
+    kGPT_OutputCompare3InterruptEnable = GPT_IR_OF3IE_MASK,   /*!< Output Compare Channel3 interrupt enable*/
+    kGPT_InputCapture1InterruptEnable  = GPT_IR_IF1IE_MASK,         /*!< Input Capture Channel1 interrupt enable*/
+    kGPT_InputCapture2InterruptEnable  = GPT_IR_IF2IE_MASK,         /*!< Input Capture Channel1 interrupt enable*/
+    kGPT_RollOverFlagInterruptEnable   = GPT_IR_ROVIE_MASK,         /*!< Counter rolled over interrupt enable*/
+} gpt_interrupt_enable_t;
+
+
+typedef enum _gpt_output_compare_channel
+{
+    kGPT_OutputCompare_Channel1 = 0U,  
+    kGPT_OutputCompare_Channel2 = 1U,  
+    kGPT_OutputCompare_Channel3 = 2U, 
+} gpt_output_compare_channel_t;
+
+
+
+#define APP_WAKEUP_SNVS_IRQ         SNVS_HP_WRAPPER_IRQn     //46
+#define APP_WAKEUP_SNVS_IRQ_HANDLER SNVS_HP_WRAPPER_IRQHandler
+
+#define SNVS_LPCR_SRTC_ENV_MASK                  (0x1U)
+#define SNVS_LPCR_SRTC_ENV_SHIFT                 (0U)
+
+
+#define SNVS_LPCR_LPTA_EN_MASK                   (0x2U)
+#define SNVS_LPCR_LPTA_EN_SHIFT                  (1U)
+
+
+
+
+#define DEMO_GPT_PERIPHERAL GPT2
+
+const gpt_config_t DEMO_GPT_config = 
+{
+    .clockSource = kGPT_ClockSource_LowFreq,
+    .divider = 1,
+    .enableFreeRun = false,
+    .enableRunInWait = true,
+    .enableRunInStop = true,
+    .enableRunInDoze = true,
+    .enableRunInDbg = false,
+    .enableMode = true
+};
+
+
+typedef enum _gpt_clock_source
+{
+    kGPT_ClockSource_Off      = 0U,  
+    kGPT_ClockSource_Periph   = 1U,  
+    kGPT_ClockSource_HighFreq = 2U,  
+    kGPT_ClockSource_Ext      = 3U, 
+    kGPT_ClockSource_LowFreq  = 4U, 
+    kGPT_ClockSource_Osc      = 5U,  
+} gpt_clock_source_t;
+
+
+
+
+
+
+
+===========================参考============================
+
+
+/* See fsl_debug_console.h for documentation of this function. */
+DbgConsole_Init(  instance,  baudRate,  device,  clkSrcFreq)
+ 
+    serial_manager_config_t     serialConfig = {0};
+    serial_manager_status_t      status       = kStatus_SerialManager_Success;
+
+ 
+    serial_port_uart_config_t uartConfig = 
+   {
+        .instance     = instance,
+        .clockRate    = clkSrcFreq,
+        .baudRate     = baudRate,
+        .parityMode   = kSerialManager_UartParityDisabled,
+        .stopBitCount = kSerialManager_UartOneStopBit,
+        .enableRx     = 1,
+        .enableTx     = 1,
+        .enableRxRTS  = 0U,
+        .enableTxCTS  = 0U,
+
+    };
+ 
+
+
+
+
+
+
+
+
+
+

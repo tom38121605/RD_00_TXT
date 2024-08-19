@@ -1,0 +1,133 @@
+﻿
+
+=======================flexio pwm--初始化======================
+
+flow：
+
+--main --> BOARD_InitBootPins --> BOARD_InitPins --> CLOCK_EnableClock -->   -->  
+
+--main --> BOARD_InitBootPins --> LPUART_GetDefaultConfig -->    
+
+
+-------------------------------------------------------------------------------------------
+
+main()
+
+    //BOARD_InitBootPins();
+    //     BOARD_InitPins();
+
+             //CLOCK_EnableClock(kCLOCK_Iomuxc);          //设置CCGR4.3-2=3
+                  CLOCK_ControlGate(kCLOCK_Iomuxc, 3);    //设置引脚复用的时钟模式为常开（进入WAIT时也开）
+
+             //串口flexio的pwm引脚的复用设置
+             IOMUXC_SetPinMux(IOMUXC_GPIO_AD_14_FLEXIO1_IO26, 0U);    
+             IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_14_FLEXIO1_IO26, 0x10A0U);   
+ 
+
+    //设置 Flexio 时钟
+    CLOCK_SetMux(kCLOCK_Flexio1Mux, FLEXIO_CLOCK_SELECT);
+    CLOCK_SetDiv(kCLOCK_Flexio1PreDiv, FLEXIO_CLOCK_PRE_DIVIDER);
+    CLOCK_SetDiv(kCLOCK_Flexio1Div, FLEXIO_CLOCK_DIVIDER);   
+
+
+    //FLEXIO_GetDefaultConfig(&fxioUserConfig);
+        memset(userConfig, 0, all);
+        userConfig->enableFlexio     = true;       //1<<0        (CTRL.0=1)
+        userConfig->enableInDoze     = false;    //1<<31    (CTRL.31=1, 这一位特殊false要置1)   
+        userConfig->enableInDebug    = true;    //1<<30    (CTRL.30=1)   
+        userConfig->enableFastAccess = false;   //0<<2      (CTRL.2=0)   
+
+
+    //CTRL.31,30,2,0=1101  使能flexio 和debug，不使能休眠和fast
+    //FLEXIO_Init(FLEXIO1, &fxioUserConfig);    
+        CLOCK_EnableClock(s_flexioClocks[FLEXIO_UART_GetInstance(base)]);      //使能flexio的时钟
+        FLEXIO1->CTRL &= ~(1<<31 | 1<<30 | 1<<2 | 1<<0);                             //CTRL.31,30,2,0=0000 
+        CTRL |=   FLEXIO_CTRL_DBGE(1) |        //  CTRL.30=1,  
+                       FLEXIO_CTRL_FASTACC(0) |    //  CTRL.2=0,  
+                       FLEXIO_CTRL_FLEXEN(1);        //  CTRL.0=1,   
+    if (!userConfig->enableInDoze)                  //注意false时是置1，置1是不使能休眠功能
+        CTRL |= FLEXIO_CTRL_DOZEN_MASK;     // 1<<31, CTRL.31=1, 在休眠下，不使能flexio功能
+
+
+    while(1)
+
+        flexio_pwm_init(DEMO_FLEXIO_FREQUENCY, --duty);
+
+        //flexio_pwm_start();
+        //     FLEXIO1->TIMCTL[0] |= kFLEXIO_TimerModeDual8BitPWM<<0;
+                FLEXIO1->TIMCTL[0] |= 2<<0;  //TIMCTL0.1-0=2开启flexio的双8位pwm模式
+
+
+----------
+
+
+//设置pwm的 timer 0 的参数赋值
+flexio_pwm_init(  freq_Hz,    // DEMO_FLEXIO_FREQUENCY    //48000   
+                           duty )       // 0-99
+ 
+    //TIMCTL0
+    fxioTimerConfig.triggerSelect   = FLEXIO_TIMER_TRIGGER_SEL_SHIFTnSTAT(0U);    // ( 0 << 2) | 0x1=1, TIMCTL0.29-24=1，triggre 选择为 "shifter0 flag"   待理解   
+    fxioTimerConfig.triggerSource   = kFLEXIO_TimerTriggerSourceInternal;                // 1 TIMCTL0.22=1, 选择 internal trigger  待理解
+    fxioTimerConfig.triggerPolarity = kFLEXIO_TimerTriggerPolarityActiveLow;            // 1 TIMCTL0.23=1, triggler active low
+    fxioTimerConfig.pinConfig       = kFLEXIO_PinConfigOutput;                           // 1  TIMCTL0.17-16=1, timer引脚输出
+    fxioTimerConfig.pinPolarity     = kFLEXIO_PinActiveHigh;                                // 0 TIMCTL0.7=0, timer pin active 为high
+    fxioTimerConfig.pinSelect       = DEMO_FLEXIO_OUTPUTPIN;                         // 26 TIMCTL0.12-8=26, 选择pwm pin为flexio26
+    fxioTimerConfig.timerMode       = kFLEXIO_TimerModeDisabled;                   // 0 TIMCTL0.1-0=0， 不使能timer 
+
+    //TIMCFG0
+    fxioTimerConfig.timerOutput     = kFLEXIO_TimerOutputOneNotAffectedByReset;                // 0  TIMCFG0.25-24=0, timer输出为逻辑1    待理解
+    fxioTimerConfig.timerDecrement  = kFLEXIO_TimerDecSrcOnFlexIOClockShiftTimerOutput;  // 0  TIMCFG0.21-20=0,设置Timer decrement 和shift clock的时钟源待~
+    fxioTimerConfig.timerDisable    = kFLEXIO_TimerDisableNever;                                             // 0  TIMCFG0.14-12=0, 在 从不禁用timer
+    fxioTimerConfig.timerEnable     = kFLEXIO_TimerEnabledAlways;                      // 0 TIMCFG0.10-8=0, 总是使能 timer
+    fxioTimerConfig.timerReset      = kFLEXIO_TimerResetNever;                            // 0 TIMCFG0.18-16=0, timer计数器从不reset   
+    fxioTimerConfig.timerStart      = kFLEXIO_TimerStartBitDisabled;                      // 0  TIMCFG0.5-4=0, 无stop位
+    fxioTimerConfig.timerStop       = kFLEXIO_TimerStopBitDisabled;                     // 0  TIMCFG0.1=0,  无start bit
+
+ 
+    sum = (DEMO_FLEXIO_CLOCK_FREQUENCY * 2 / freq_Hz + 1) / 2;
+    lowerValue = (sum * duty / 50 + 1) / 2;
+    upperValue                   = sum - lowerValue;
+    fxioTimerConfig.timerCompare = ((upperValue - 1) << 8) | (lowerValue - 1);   //TIMCMP0=value, 设置pwm的占空比值
+
+    FLEXIO_SetTimerConfig( FLEXIO1, 0, &fxioTimerConfig);
+ 
+
+---------------
+
+//设置tx的 FLEXIO1的 TIMCFG0,TIMCMP0,TIMCTL0寄存器 //待理解
+FLEXIO_SetTimerConfig(    *base,                  // FLEXIO1
+                                          index,                 // 0
+                                          *timerConfig)     // timerConfig
+
+    base->TIMCFG[0] =  FLEXIO_TIMCFG_TIMOUT(0) |     //*  TIMCFG0.25-24=0, timer输出为逻辑1    待理解
+                                     FLEXIO_TIMCFG_TIMDEC(0) |     //  TIMCFG0.21-20=0,设置Timer decrement 和shift clock的时钟源   待理解
+                                     FLEXIO_TIMCFG_TIMRST(0) |     //*  TIMCFG0.18-16=0, timer计数器从不reset   
+                                     FLEXIO_TIMCFG_TIMDIS(2) |      //  TIMCFG0.14-12=2, 在定时器比较时禁用 timer  待理解
+                                     FLEXIO_TIMCFG_TIMENA(2) |     //*  TIMCFG0.10-8=2, 在trigger high时，enable timer
+                                     FLEXIO_TIMCFG_TSTOP(2) |       //  TIMCFG0.5-4=2, 在timer disable时，发出stop位
+                                     FLEXIO_TIMCFG_TSTART(1);       //  TIMCFG0.t1=1,  使能start bit
+
+    base->TIMCMP[0] = FLEXIO_TIMCMP_CMP(timerCmp);  // 由FLEXIO_CLOCK_FREQUENCY时钟和波特率计算得到
+
+    base->TIMCTL[0] = FLEXIO_TIMCTL_TRGSEL(1) |      //*  TIMCTL0.29-24=1，triggre 选择为 "shifter0 flag"   待理解
+                                   FLEXIO_TIMCTL_TRGPOL(1) |    //*  TIMCTL0.23=1, triggler active low
+                                   FLEXIO_TIMCTL_TRGSRC(1) |     //*  TIMCTL0.22=1, 选择 internal trigger  待理解
+                                   FLEXIO_TIMCTL_PINCFG(0) |     //  TIMCTL0.17-16=0, timer引脚不输出
+                                   FLEXIO_TIMCTL_PINSEL(21) |    //*  TIMCTL0.12-8=21, 选择timer pin为21
+                                   FLEXIO_TIMCTL_PINPOL(0) |     //*  TIMCTL0.7=0, timer pin active 为high
+                                   FLEXIO_TIMCTL_TIMOD(1);       //  TIMCTL0.1-0=1， 双8位计数器波特率模式  待理解
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

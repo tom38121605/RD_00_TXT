@@ -1,0 +1,144 @@
+﻿
+
+
+base->RCSR
+
+
+
+
+
+ ===============dmaConfig==参数==================
+
+    //取得dmaConfig的配置参数
+    //EDMA_GetDefaultConfig(&dmaConfig);
+        memset(dmaConfig, 0, all);
+        dmaConfig->enableRoundRobinArbitration = false;   //不启用循环仲裁
+        dmaConfig->enableHaltOnError           = true;    //启用err模式，有err时其他中断请求被忽略
+        dmaConfig->enableContinuousLinkMode    = false;   //不启用连续链接模式
+        dmaConfig->enableDebugMode             = false;   //不启用debug模式
+ 
+
+
+===============txDmaHandle==参数==================
+
+//给dmaTxHandle赋部分参数一（base，channel）。使能DMA0的总中断, 复位channel0所有 TCD[0]相关的寄存器 到0 值。
+参数: dmaTxHandle,  DMA1, 0
+EDMA_CreateHandle(  *handle,   *base,   channel)
+
+    memset(dmaTxHandle, 0, all);
+
+    dmaTxHandle->base    =DMA0;             
+    dmaTxHandle->channel =  channel;     //0
+
+
+             //复位所有 TCD[0]相关的寄存器 到0 值  //TCD0对应channel0 
+             tcdRegs            = &DMA0->TCD[0];  
+             tcdRegs->SADDR     = 0;    //65页 1000h， source address  待理解
+             tcdRegs->SOFF      = 0;      // source address  偏移量  （每次读取完后自动偏移的量）
+             tcdRegs->ATTR      = 0;      //设置源数据和目标数据的，地址模式和数据大小
+             tcdRegs->NBYTES    = 0;    //每个请求中要传输的字节数
+             tcdRegs->SLAST     = 0;     //调整上一次的source地址
+             tcdRegs->DADDR     = 0;   //destination address
+             tcdRegs->DOFF      = 0;     // 目标地址 偏移量
+             tcdRegs->CITER     = 0;      //ELINK+ LINKCH+ CITER
+             tcdRegs->DLAST_SGA = 0;   //调整上一次的目标地址
+             tcdRegs->CSR       = 0;       //为了适应在EDMA_ SubmitTransfer中的EDMA忙检查机制， CSR必须设置为0。
+             tcdRegs->BITER     = 0;       // ELINK+ BITER
+
+
+
+***================================================================
+
+
+
+----
+
+//给txHandle赋参数部分一(callback,txDmaHandle等)，把txHandle赋给全局变量数组，设置dma的memory和callback
+  给txDmaHandle赋参数部分二（callback,header,tcdUsed,tcdSize,tcdPool等）
+//参数： SAI1, txHandle, tx_callback, NULL, dmaTxHandle
+SAI_TransferTxCreateHandleEDMA(  *base,  *handle,  callback,  *userData, *txDmaHandle)
+
+    //设置tcd的memory   待理解  （对dma的专用配置）
+    //EDMA_InstallTCDMemory(txDmaHandle, STCD_ADDR(txHandle->tcd), 4);
+           txDmaHandle->header  = 1;
+           txDmaHandle->tcdUsed = 0;
+           txDmaHandle->tcdSize =tcdSize;   //4， 是指4段dma吗  待验证
+           txDmaHandle->flags   = 0;
+           txDmaHandle->tcdPool = tcdPool;  // ( tcd+0x100) & ~0x1F  //举例：STCD_ADDR(0x1234)  = 0x1300 待理解  
+
+    //设置dma的callback
+    //EDMA_SetCallback(txDmaHandle, SAI_TxEDMACallback, &s_edmaPrivateHandle[instance][0]);
+           txDmaHandle->callback = SAI_TxEDMACallback;
+           txDmaHandle->userData = null;
+
+
+
+===============s_EDMAHandle==参数==================
+
+EDMA_CreateHandle(  *handle,   *base,   channel)
+ 
+    //s_EDMAHandle[channelIndex] = dmaTxHandle;
+         s_EDMAHandle[0] = dmaTxHandle;
+
+
+
+===============txHandle==参数==================
+
+//给txHandle赋参数部分一(callback,txDmaHandle等)，把txHandle赋给全局变量数组，设置dma的memory和callback
+  给txDmaHandle赋参数部分二（callback,header,tcdUsed,tcdSize,tcdPool等）
+//参数： SAI1, txHandle, tx_callback, NULL, dmaTxHandle
+SAI_TransferTxCreateHandleEDMA(  *base,  *handle,  callback,  *userData, *txDmaHandle)
+ 
+    memset(txHandle, 0, all);
+
+    txHandle->dmaHandle = txDmaHandle;  //dmaTxHandle
+    txHandle->callback  = callback;               //tx_callback
+    txHandle->userData  = userData;
+
+    txHandle->state =kSAI_Idle;
+
+    s_edmaPrivateHandle[instance][0].base   = base;
+    s_edmaPrivateHandle[instance][0].handle = handle;
+
+
+
+===============s_edmaPrivateHandle==参数==================
+
+SAI_TransferTxCreateHandleEDMA(  *base,  *handle,  callback,  *userData, *txDmaHandle)
+ 
+    s_edmaPrivateHandle[instance][0].base   = base;
+    s_edmaPrivateHandle[instance][0].handle = handle;
+
+
+
+===============edma的config==参数============================
+
+
+//准备edma的config配置参数(destAddr,srcAddr,transferBytes,srcOffset等) 
+EDMA_PrepareTransferConfig(edma_transfer_config_t *config,    //config
+                                void         *srcAddr,                //xfer->data
+                                uint32_t    srcWidth,               //txHandle->bytesPerFrame  //4
+                                int16_t      srcOffset,               //txHandle->bytesPerFrame  //4
+                                void         *destAddr,               //destAddr     //TDR[0]
+                                uint32_t    destWidth,              //txHandle->bytesPerFrame  //4
+                                int16_t      destOffset,              //destOffset    //0
+                                uint32_t     bytesEachRequest,  //txHandle->count * txHandle->bytesPerFrame  //16*4=64
+                                uint32_t     transferBytes)           //xfer->dataSize  //=BUFFER_SIZE=1024
+ 
+   
+    memset(config, 0, all );
+
+    config->destAddr =  destAddr;      //TDR[0]
+    config->srcAddr  =   srcAddr;        //xfer->data
+ 
+    config->minorLoopBytes   = bytesEachRequest;                                    //64
+    config->majorLoopCounts  = transferBytes / bytesEachRequest;            //1024/64=16
+    config->srcTransferSize  = EDMA_TransferWidthMapping(srcWidth);      //2
+    config->destTransferSize = EDMA_TransferWidthMapping(destWidth);   //2
+    config->destOffset       = destOffset;    //0
+    config->srcOffset        =  srcOffset;       //4
+ 
+
+
+
+

@@ -1,0 +1,13 @@
+﻿
+
+#define DEMO_FLEXIO_BASEADDR                  FLEXIO1
+#define DEMO_FLEXIO_TIMER_CH                  (0U)              /* Flexio timer0 used */
+
+
+
+
+
+
+
+
+

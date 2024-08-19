@@ -1,0 +1,498 @@
+﻿
+
+=======================I2C初始化的流程===========================
+
+flow：
+
+main --> BOARD_InitBootPins --> BOARD_InitPins --> CLOCK_EnableClock --> IOMUXC_SetPinMux --> IOMUXC_SetPinConfig
+
+main --> BOARD_InitBootPins --> GPIO_PinInit --> CLOCK_SetMux   --> CLOCK_SetDiv --> LPI2C_MasterInit  
+
+
+-------------------------------------------------------------------------------------------
+
+
+#define LPI2C_BAUDRATE               100000U
+
+main()
+
+    //BOARD_InitBootPins();
+    //     BOARD_InitPins();
+
+             //设置引脚复用的时钟模式为常开（进入WAIT时也开）
+             //CLOCK_EnableClock(kCLOCK_Iomuxc);    
+                  CLOCK_ControlGate(kCLOCK_Iomuxc, 3);    //设置CCGR4.3-2=3
+
+             //设置IO口P01为普通I2C的SDA口，开输入 
+             IOMUXC_SetPinMux(IOMUXC_GPIO_01_LPI2C1_SDA, 1U); 
+             --IOMUXC_SetPinMux(IOMUXC_GPIO_02_LPI2C1_SCL, 1U);    //类似，忽略
+
+             //设置P01为22k上拉，150MHz，开opendrain，驱动强度R0/4, 切换速度为慢速
+             IOMUXC_SetPinConfig(IOMUXC_GPIO_01_LPI2C1_SDA, 0xD8A0U); 
+             --IOMUXC_SetPinConfig(IOMUXC_GPIO_02_LPI2C1_SCL, 0xD8A0U);     //类似，忽略
+
+    //或设置I2C时钟 （跳过）
+    CLOCK_SetMux(kCLOCK_Lpi2cMux, LPI2C_CLOCK_SOURCE_SELECT);
+
+
+    //或设置I2C分配（跳过）
+    CLOCK_SetDiv(kCLOCK_Lpi2cDiv, LPI2C_CLOCK_SOURCE_DIVIDER);
+
+
+    //设置i2c的初始化参数
+    //LPI2C_MasterGetDefaultConfig(&masterConfig);
+          masterConfig->enableMaster            = true;
+          masterConfig->debugEnable             = false;
+          masterConfig->enableDoze              = true;
+          masterConfig->ignoreAck               = false;
+          masterConfig->pinConfig               = kLPI2C_2PinOpenDrain;
+          masterConfig->baudRate_Hz             = 100000U;
+
+          masterConfig->busIdleTimeout_ns       = 0U;    /* Set to 0 to disable the function */
+          masterConfig->pinLowTimeout_ns        = 0U;   /* Set to 0 to disable the function */
+          masterConfig->sdaGlitchFilterWidth_ns = 0U;   /* Set to 0 to disable the function */
+          masterConfig->sclGlitchFilterWidth_ns = 0U;     /* Set to 0 to disable the function */
+
+          masterConfig->hostRequest.enable      = false;
+          masterConfig->hostRequest.source      = kLPI2C_HostRequestExternalPin;
+          masterConfig->hostRequest.polarity    = kLPI2C_HostRequestPinActiveHigh;
+
+
+    //设置i2c的波特率参数
+    masterConfig.baudRate_Hz = LPI2C_BAUDRATE;
+
+    //i2c初始化，使能I2C的时钟，复位I2C1，不使能debug，進入省电模式，设置为双向开漏结构，清零watermark ，使能I2C master
+    LPI2C_MasterInit(EXAMPLE_I2C_MASTER, &masterConfig, LPI2C_MASTER_CLOCK_FREQUENCY);
+
+
+------------------------
+
+//rt1010rm的寄存器P1452：LPI2C Memory map
+//i2c初始化，使能I2C的时钟，复位I2C1，不使能debug，進入省电模式，设置为双向开漏结构，清零watermark ，使能I2C master
+//参数：0x401A4000（LPI2C1_BASE）  ,  &masterConfig,    __I2C_CLK__(忽略)
+LPI2C_MasterInit( *base,   *masterConfig,  sourceClock_Hz ) 
+
+    //取得I2C1的尾数1
+    instance = LPI2C_GetInstance(base);    
+
+    //使能I2C的时钟
+    (void)CLOCK_EnableClock(kLpi2cClocks[instance]);
+ 
+ 
+    //复位I2C1
+    //LPI2C_MasterReset(base);
+       base->MCR = LPI2C_MCR_RST_MASK=2;    //I2C1.MCR.1=1  //复位I2C1
+       base->MCR = 0;  //清0复位
+
+
+    //不使能debug，進入省电模式
+    base->MCR = LPI2C_MCR_DBGEN(0) | LPI2C_MCR_DOZEN(!(1));  //MCR.3=0 不使能debug, MCR.2=0 進入省电模式
+
+    // 不使能host request input， 设置request input is pin HREQ， input pin极性为高电平
+    value = base->MCFGR0;
+    value &= (~(LPI2C_MCFGR0_HREN_MASK | LPI2C_MCFGR0_HRPOL_MASK | LPI2C_MCFGR0_HRSEL_MASK));
+    value |= LPI2C_MCFGR0_HREN(masterConfig->hostRequest.enable) |        //MCFGR0.0=0, 不使能host request input
+             LPI2C_MCFGR0_HRPOL(masterConfig->hostRequest.polarity) |     //MCFGR0.2=0, request input is pin HREQ //待理解
+             LPI2C_MCFGR0_HRSEL(masterConfig->hostRequest.source);        //MCFGR0.1=0, request input pin极性为高电平 //待理解
+    base->MCFGR0 = value;
+
+
+    //设置为双向开漏结构，normally Ack and nack
+    value = base->MCFGR1;
+    value &= ~(LPI2C_MCFGR1_PINCFG_MASK | LPI2C_MCFGR1_IGNACK_MASK);
+    value |= LPI2C_MCFGR1_PINCFG(masterConfig->pinConfig);  //MCFGR1.26-24＝000, 为双向开漏结构
+    value |= LPI2C_MCFGR1_IGNACK(masterConfig->ignoreAck);  //MCFGR1.9=0, normally Ack
+    base->MCFGR1 = value;
+
+
+    //LPI2C_MasterSetWatermarks(base, kDefaultTxWatermark, (size_t)kDefaultRxWatermark);
+          base->MFCR = 0 | 0;  //清零watermark ， 跟FIFO发送或接收有关，待理解
+
+
+    //过滤器设置        //因都为0，所以跳过
+    。。。
+
+
+    //使能I2C master
+        base->MCR = 1;   //MCR.0=1  
+
+
+--------------------------
+
+//rt1010rm的寄存器P316：IOMAXC_SW_MUX_CTL_PAD_GPIO_01   
+//设置IO口P01为普通I2C的SDA口，开输入 
+//参数： 0x401F80B8U, 0x3U, 0x401F81C4U,    0x3U, 0x401F8168U ,    1   // 0x401F80B8U  -- 是指P01的MUX模式寄存器
+IOMUXC_SetPinMux( muxRegister, muxMode,  inputRegister,        inputDaisy,  configRegister,  inputOnfield)
+ 
+    //设置muxreg的bit2-0和bit4
+       muxRegister.2-0=muxMode=3 | muxRegister.4=inputOnfield=1 ;    //bit2-0=011,  P01做SDA口; bit4=1, 打开输入
+
+    if (inputRegister != 0UL)   //这里是0x401F81C4U，固要执行下面语句
+       *inputRegister = inputDaisy=3;  //设置SDA的输入模式为ALT3   (待理解--ALT3)
+ 
+
+----------------
+
+//rt1010rm的寄存器P403：IOMAX_SW_PAD_CTL_PAD_GPIO_01 
+//设置P01为22k上拉，150MHz，开opendrain，驱动强度R0/4, 切换速度为慢速
+//参数： 0x401F80B8U, 0x3U, 0x401F81C4U,    0x3U, 0x401F8168U ,     0xD8A0U  // 0x401F8168U  -- 是指P01的config寄存器
+IOMUXC_SetPinConfig( muxRegister, muxMode,  inputRegister,    inputDaisy,  configRegister,  configValue)
+ 
+     configRegister = configValue=D8A0U;     //bit15-14=11, 22k上拉；bit13=0 待理解，bit12=1 使能上拉keeper待理解；
+                                                                    //bit11=1，开opendrain; bit7-6=10, 速度150MHz；
+                                                                    //bit5-3=100, 驱动强度=R0/4待理解；BIT0=0，切换速度为慢速。
+
+
+ 
+=======================I2C向从机写入的流程===========================
+
+写数据 flow：
+
+main --> LPI2C_MasterStart--> LPI2C_MasterGetFifoCounts  --> LPI2C_MasterGetStatusFlags  
+               --> LPI2C_MasterSend(寄存器地址)  -->  LPI2C_MasterSend(数据) -->  LPI2C_MasterStop   
+
+
+---------------------------------------------------------------------------------------------------------------
+
+
+#define LPI2C_MASTER_SLAVE_ADDR_7BIT 0x7EU
+u8  deviceAddress = 0x01U;
+
+#define LPI2C_DATA_LENGTH            33U
+
+u8   txBuff[33]={32,0,1,2...,31];
+u8   rxBuff[33]={0};
+
+u8  txCount        = 0xFFU;
+
+main()
+ 
+
+//--------------------------------向从机写入数据------------------------------------------------------
+
+        // subAddress = 0x01, data = txBuff 
+        // start + slaveaddress(w) + subAddress      + length of data buffer + data buffer       + stop  
+
+        //发送器件W地址，看返回是否成功
+        //先检查确认bus总线不忙(MSR.25-24),再清MSR.14-8的标志位,关auto_stop(MCFGR1.8),等待fifo有空间,然后发送器件W地址MTDR.7-0 
+        LPI2C_MasterStart(EXAMPLE_I2C_MASTER, LPI2C_MASTER_SLAVE_ADDR_7BIT, kLPI2C_Write)
+ 
+        //取得fifo中正在发送的字节数MFSR.2-0
+        LPI2C_MasterGetFifoCounts(EXAMPLE_I2C_MASTER, NULL, &txCount);
+
+        //等待TX FIFO以前的数据全部发送完毕
+        while (txCount)
+            LPI2C_MasterGetFifoCounts(EXAMPLE_I2C_MASTER, NULL, &txCount);
+
+        //检查跟从机通讯是否成功，MSR.10=1，则不成功（有错误的NACK）
+        if (LPI2C_MasterGetStatusFlags(EXAMPLE_I2C_MASTER) & kLPI2C_MasterNackDetectFlag) //看是否错误标志MSR.10是否为1
+            return kStatus_LPI2C_Nak;
+
+        //写subaddr（寄存器地址），看返回是否成功
+        reVal = LPI2C_MasterSend(EXAMPLE_I2C_MASTER, &deviceAddress, 1);
+
+        //如果写入subaddr失败，则停止master
+        if (reVal != kStatus_Success)
+            if (reVal == kStatus_LPI2C_Nak)
+                LPI2C_MasterStop(EXAMPLE_I2C_MASTER);
+            return -1;
+
+
+        //向从机写入一串数据，看是否返回成功
+        reVal = LPI2C_MasterSend(EXAMPLE_I2C_MASTER, txBuff, LPI2C_DATA_LENGTH);
+
+        if (reVal != kStatus_Success)
+            if (reVal == kStatus_LPI2C_Nak)
+                LPI2C_MasterStop(EXAMPLE_I2C_MASTER);
+            return -1;
+
+
+       //停止I2C master， 看是否返回成功
+        reVal = LPI2C_MasterStop(EXAMPLE_I2C_MASTER);
+        if (reVal != kStatus_Success)
+            return -1;
+
+
+-------------
+
+//向从机发送停止指令MTDR10-8=010，并检查是否成功停止
+LPI2C_MasterStop( *base)
+
+    //等待fifo以前的数据发送(MFSR.2-1)，直到有发送空间(txCount>0)
+    LPI2C_MasterWaitForTxReady(base);
+
+    if (kStatus_Success == result)
+
+            //发送停止i2c指令,MTDR10-8=010
+            base->MTDR = kStopCmd;   
+
+            //读取状态，status =MSR
+            status = LPI2C_MasterGetStatusFlags(base);  
+
+            //看状态标志中，有没错误标志MSR.13-10，如有错误标志，则返回错误标志，清状态标志(含错误标志)，复位fifo
+            result = LPI2C_MasterCheckAndClearError(base, status);
+
+            //看是否停止成功bit8,1=1,1表示停止成功，MSR.8=1（停止标志）, MSR.0=1(请求发送数据--待理解)
+            if (  ( 0 != (status &kLPI2C_MasterStopDetectFlag)  ) &&   ( 0 != (status &kLPI2C_MasterTxReadyFlag) )  )
+            
+                 //清停止标志, MSR.8=0
+                LPI2C_MasterClearStatusFlags(base, kLPI2C_MasterStopDetectFlag);   
+                break;
+
+-------------
+
+//写subaddr（寄存器地址），看返回是否成功
+//参数：0x401A4000（LPI2C1_BASE）  , 1  ,  1
+LPI2C_MasterSend(*base, *txBuff, txSize)
+
+    *buf    = (uint8_t *)txBuff;
+
+    //发送数据到从机
+    while ( 0 != (txSize--) )
+
+        //等待fifo以前的数据发送(MFSR.2-1)，直到有发送空间(txCount>0)
+        result = LPI2C_MasterWaitForTxReady(base);
+        if (kStatus_Success != result)
+            break;
+
+        //向从机发送数据
+        base->MTDR = *buf++;   //MTDR.7-0=buf
+
+ 
+-----------------------------------------
+
+//rt1010rm的寄存器P1452：LPI2C Memory map
+//先检查确认bus总线不忙(MSR.25-24),再清MSR.14-8的标志位,关auto_stop(MCFGR1.8),等待fifo有空间,然后发送器件W地址MTDR.7-0 
+//参数：0x401A4000（LPI2C1_BASE）  , 0x7E （高7位）  ,  0 
+LPI2C_MasterStart( *base,  address,   dir)
+ 
+        //看是否MSR.25-24=10 表示bus忙
+        //LPI2C_CheckForBusyBus(base);
+        //     status=LPI2C_MasterGetStatusFlags(base);
+                return base->MSR;
+ 
+               if (     (0 != status.25)  &&  (0 == status.24 )     ) 
+                     ret = kStatus_LPI2C_Busy;
+
+
+       //---------------- 如果总线（bus）不忙，则继续下面的步骤 -------------
+   
+        //清零MSR.14-8
+        //LPI2C_MasterClearStatusFlags(base, (uint32_t)kLPI2C_MasterClearFlags);
+              base->MSR = statusMask;
+
+        //关 auto-stop 
+        base->MCFGR1 &= ~LPI2C_MCFGR1_AUTOSTOP_MASK;     //MCFGR1.8=0
+
+        //等待fifo以前的数据发送(MFSR.2-1)，直到有发送空间(txCount>0)
+        result = LPI2C_MasterWaitForTxReady(base);
+
+        //然后发送器件地址MTDR 
+        if (kStatus_Success == result)
+            base->MTDR =kStartCmd | ( address *2 +0 );  //MTDR.10-8=100, MTDR.7-0=器件地址w
+    
+ 
+---
+
+//rt1010rm的寄存器P1452：LPI2C Memory map
+//等待fifo以前的数据发送(MFSR.2-0)，直到有发送空间(txCount>0)
+//参数：0x401A4000（LPI2C1_BASE）  
+LPI2C_MasterWaitForTxReady( *base)
+
+    txFifoSize = FSL_FEATURE_LPI2C_FIFO_SIZEn(base)=4;
+ 
+    do
+    {
+        //取得fifo中正在发送的字节数MFSR.2-0
+        //LPI2C_MasterGetFifoCounts(base, NULL, &txCount);
+              txCount = base->MFSR.2-0;
+
+        //计算fifo里面发送缓冲区的剩余空间
+        txCount = 4 - txCount;
+
+        //取得I2C1的状态标志
+        //status = LPI2C_MasterGetStatusFlags(base);
+                status = base->MSR;
+
+        //检查I2C通讯是否出错,看状态标志中MSR.13-10,有没错误标志,如有错误标志,则返回错误标志,清状态标志(含错误标志)，复位fifo
+        result = LPI2C_MasterCheckAndClearError(base, status);
+        if (kStatus_Success != result)   //如果有错误标志，则退出，并返回该错误标志
+            break;
+ 
+    } while (0 == txCount);   //如果fifo正在发送，且没有空余发送空间，则继续等待 （直到有空间，或通讯出错）
+ 
+ 
+---
+
+//rt1010rm的寄存器P1452：LPI2C Memory map
+//看状态标志中，有没错误标志MSR.13-10，如有错误标志，则返回错误标志，清状态标志（含错误标志），复位fifo
+//参数：0x401A4000（LPI2C1_BASE）  ， status
+LPI2C_MasterCheckAndClearError( *base,   status) 
+
+    /* Check for error. These errors cause a stop to automatically be sent. We must */
+    /* clear the errors before a new transfer can start. */
+
+    //检查status是否有错误标志位：bit10,11,12,13
+    status &= kLPI2C_MasterErrorFlags;   //bit10,11,12,13   
+
+    //如果有错误标志位，则判断是那种错误
+    if (0U != status)
+ 
+        //错误标志检查，按严重成度顺序
+        if (0U != (status & kLPI2C_MasterPinLowTimeoutFlag))    //MSR.13=1  ，Pin Low Timeout 
+            result = kStatus_LPI2C_PinLowTimeout;
+      
+        else if (0U != (status &  kLPI2C_MasterArbitrationLostFlag))       //MSR.11 , Arbitration(仲裁) Lost
+            result = kStatus_LPI2C_ArbitrationLost;
+   
+        else if (0U != (status &  kLPI2C_MasterNackDetectFlag))      //MSR.10 ,NACK Detect   
+            result = kStatus_LPI2C_Nak;
+ 
+        else if (0U != (status & kLPI2C_MasterFifoErrFlag))    //MSR.12 ，FIFO Error
+            result = kStatus_LPI2C_FifoError;
+ 
+
+         //清零状态标志MSR.14-8 （所有状态标志）
+        //LPI2C_MasterClearStatusFlags(base, (uint32_t)kLPI2C_MasterClearFlags);
+              base->MSR = statusMask;
+
+        //复位接收和发送fifo,  These flags clear automatically(待理解，指那些flags)
+        base->MCR9-8=11;
+ 
+
+
+
+=======================I2C向从机读取的流程===========================
+
+
+读数据 flow：
+
+main --> LPI2C_MasterStart--> LPI2C_MasterGetFifoCounts  --> LPI2C_MasterGetStatusFlags  
+               --> LPI2C_MasterSend(寄存器地址)  --> LPI2C_MasterRepeatedStart --> LPI2C_MasterReceive--> LPI2C_MasterStop   
+
+
+//--------------------------------出从机读取数据------------------------------------------------------
+ 
+ 
+        // subAddress = 0x01,  data = rxBuff  
+        // start + slaveaddress(w) + subAddress    + repeated start + slaveaddress(r)    + rx data buffer     + stop 
+ 
+        //发送器件W地址，看返回是否成功 
+        //先检查确认bus总线不忙(MSR.25-24),再清MSR.14-8的标志位,关auto_stop(MCFGR1.8),等待fifo有空间,然后发送器件W地址MTDR.7-0 
+        LPI2C_MasterStart(EXAMPLE_I2C_MASTER, LPI2C_MASTER_SLAVE_ADDR_7BIT, kLPI2C_Write) 
+ 
+        //取得fifo中正在发送的字节数MFSR.2-0
+        LPI2C_MasterGetFifoCounts(EXAMPLE_I2C_MASTER, NULL, &txCount);
+
+        //等待TX FIFO以前的数据全部发送完毕
+        while (txCount)
+            LPI2C_MasterGetFifoCounts(EXAMPLE_I2C_MASTER, NULL, &txCount);
+  
+        //检查跟从机通讯是否成功，MSR.10=1，则不成功（有错误的NACK）
+        if (LPI2C_MasterGetStatusFlags(EXAMPLE_I2C_MASTER) & kLPI2C_MasterNackDetectFlag)
+            return kStatus_LPI2C_Nak;
+
+        //写subaddr（寄存器地址）到MTDR.7-0 ，看返回是否成功
+        reVal = LPI2C_MasterSend(EXAMPLE_I2C_MASTER, &deviceAddress, 1);
+
+        //如果写入subaddr失败，则停止master
+        if (reVal != kStatus_Success)
+            if (reVal == kStatus_LPI2C_Nak)
+                LPI2C_MasterStop(EXAMPLE_I2C_MASTER);
+            return -1;
+
+        //发送器件R地址到MTDR.7-0，看返回是否成功 
+        //reVal = LPI2C_MasterRepeatedStart(EXAMPLE_I2C_MASTER, LPI2C_MASTER_SLAVE_ADDR_7BIT, kLPI2C_Read);
+               LPI2C_MasterStart(base, address, 0);
+
+        //如果写入器件R地址失败，返回失败
+        if (reVal != kStatus_Success)
+            return -1;
+
+        //向从机读取一串数据，看返回是否成功
+        //向从机读取一串数据，先把要读取的总字节数写入MTDR7-0(size太则需多次写入)，读取MRDR.7-0 到buf字符串中 
+       （每次读取时，MRDR.14为0表示成功读取一个字节）
+        reVal = LPI2C_MasterReceive(EXAMPLE_I2C_MASTER, rxBuff, 33 - 1);
+
+        //如果写入读取一串数据失败，则停止master
+        if (reVal != kStatus_Success) 
+            if (reVal == kStatus_LPI2C_Nak) 
+                LPI2C_MasterStop(EXAMPLE_I2C_MASTER); 
+            return -1;
+ 
+       //停止I2C master， 看是否返回成功
+        reVal = LPI2C_MasterStop(EXAMPLE_I2C_MASTER);
+        if (reVal != kStatus_Success) 
+            return -1;
+  
+  
+    //打印I2C所读取的数据
+    for (uint32_t i = 0U; i < LPI2C_DATA_LENGTH - 1; i++)
+        if (i % 8 == 0)
+            PRINTF("\r\n");  
+        PRINTF("0x%2x  ", rxBuff[i]);
+
+--------------
+
+
+//向从机读取一串数据，先把要读取的总字节数写入MTDR7-0(size太则需多次写入)，读取MRDR.7-0 到buf字符串中 
+ （每次读取时，MRDR.14为0表示成功读取一个字节）
+LPI2C_MasterReceive( *base,  *rxBuff,  rxSize)
+ 
+    uint8_t *buf;
+    tmpRxSize = rxSize;
+
+
+    //检查最大读取数据
+    if ( rxSize > (256 *4) )
+        return kStatus_InvalidArgument;
+
+   if ( rxSize !=0 )
+
+        //等待fifo以前的数据发送(MFSR.2-0)，直到有发送空间(txCount>0)
+        result = LPI2C_MasterWaitForTxReady(base);
+        if (kStatus_Success == result)
+
+            while (tmpRxSize != 0U)
+            
+                //MTDR7-0一次最大可写入255(对应读取256个字节)，如果要读取大于256字节，则分多次写入MTDR7-0（里面应该有一个累加器）
+                if (tmpRxSize > 256)                
+                    base->MTDR =kRxDataCmd |LPI2C_MTDR_DATA(0xFF);   //MTDR.10-8=010 读取操作，MTDR.7-0=count 多少字节
+                    tmpRxSize -= 256;
+               
+                else                
+                    base->MTDR =kRxDataCmd | LPI2C_MTDR_DATA(tmpRxSize - 1);
+                    tmpRxSize  = 0;     
+
+            
+            buf =rxBuff;
+
+            //向从机中读取数据
+            while (0 != rxSize-- )
+ 
+                //不断读取MRDR，直到BIT14为0，表示已成功读到这个字节的数据
+                u32 value = 0;
+                do
+                {
+                    //看状态标志中，有没错误标志MSR.13-10，如有错误标志，则返回错误标志，清状态标志(含错误标志)，复位fifo
+                    result = LPI2C_MasterCheckAndClearError(base, LPI2C_MasterGetStatusFlags(base));
+                    if (kStatus_Success != result)
+                        break;
+
+                    value = base->MRDR;
+ 
+                } while (MRDR.14==1 );  //当bit14为1时，表示没有读到数据，需重新读取（待验证）
+ 
+                if ( kStatus_Success != result )
+                    break;
+
+                //保存MRDR.7-0 到buf字符串中，然后读取下一个字节
+                *buf++ = (uint8_t)(value & LPI2C_MRDR_DATA_MASK);  //buf = MRDR.7-0
+
+   
+ 
+
+ 
+
+
+

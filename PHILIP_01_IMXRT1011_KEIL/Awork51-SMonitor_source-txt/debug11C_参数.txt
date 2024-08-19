@@ -1,0 +1,56 @@
+﻿
+
+
+//取得定时器GPT2的默认参数
+GPT_GetDefaultConfig( *config)
+
+    memset( config, 0, all );
+
+    config->clockSource     = kGPT_ClockSource_Periph;    //CR.8-6 =1,  PeriphFreq clock
+    config->divider         = 1;                                              //PR.11-0=(1-1)=0
+
+
+    config->enableRunInStop = true;    //CR.5 = 1 , 在Stop模式使能
+    config->enableRunInWait = true;     //CR.3= 1， WAITEN, 在在wait模式使能
+
+    config->enableRunInDoze = false;    //CR.4 = 0， 在休眠模式不使能
+    config->enableRunInDbg  = false;    //CR.2 = 0， 在debug模式不使能
+
+    config->enableFreeRun   = false;    //CR.9 = 0,  触发比较后计数清0（restart mode） 
+    config->enableMode      = true;    //CR.1 = 1，不使能GPT2后计时器清0
+
+
+
+------------------------------------------------------
+ 
+CLOCK_GetFreq(  name) 
+
+    switch (name)
+
+        case kCLOCK_CpuClk:      //0
+        case kCLOCK_CoreClk:     //1
+            freq = CLOCK_GetCoreFreq();
+            break;
+
+        case kCLOCK_IpgClk:     //2
+            freq = CLOCK_GetIpgFreq();
+            break;
+
+        case kCLOCK_PerClk:     //3
+            freq = CLOCK_GetPerClkFreq();
+            break;
+
+        case kCLOCK_OscClk:     //4
+            freq = CLOCK_GetOscFreq();
+            break;
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,48 @@
+﻿
+
+    //FLEXIO_GetDefaultConfig(&fxioUserConfig);
+        memset(userConfig, 0, all);
+        userConfig->enableFlexio     = true;       //1<<0        (CTRL.0)
+        userConfig->enableInDoze     = false;    //0<<31    (CTRL.31, 这一位特殊false要置1)   
+        userConfig->enableInDebug    = true;    //1<<30    (CTRL.30)   
+        userConfig->enableFastAccess = false;   //0<<2      (CTRL.2)   
+
+
+
+----------------
+
+
+//设置pwm的 timer 0 的参数赋值
+flexio_pwm_init(  freq_Hz,    // DEMO_FLEXIO_FREQUENCY    //48000   
+                           duty )       // 0-99
+ 
+    //TIMCTL0
+    fxioTimerConfig.triggerSelect   = FLEXIO_TIMER_TRIGGER_SEL_SHIFTnSTAT(0U);    // ( 0 << 2) | 0x1=1, TIMCTL0.29-24=1，triggre 选择为 "shifter0 flag"   待理解   
+    fxioTimerConfig.triggerSource   = kFLEXIO_TimerTriggerSourceInternal;                // 1 TIMCTL0.22=1, 选择 internal trigger  待理解
+    fxioTimerConfig.triggerPolarity = kFLEXIO_TimerTriggerPolarityActiveLow;            // 1 TIMCTL0.23=1, triggler active low
+    fxioTimerConfig.pinConfig       = kFLEXIO_PinConfigOutput;                           // 1  TIMCTL0.17-16=1, timer引脚输出
+    fxioTimerConfig.pinPolarity     = kFLEXIO_PinActiveHigh;                                // 0 TIMCTL0.7=0, timer pin active 为high
+    fxioTimerConfig.pinSelect       = DEMO_FLEXIO_OUTPUTPIN;                         // 26 TIMCTL0.12-8=26, 选择pwm pin为flexio26
+    fxioTimerConfig.timerMode       = kFLEXIO_TimerModeDisabled;                   // 0 TIMCTL0.1-0=0， 不使能timer 
+
+    //TIMCFG0
+    fxioTimerConfig.timerOutput     = kFLEXIO_TimerOutputOneNotAffectedByReset;                // 0  TIMCFG0.25-24=0, timer输出为逻辑1    待理解
+    fxioTimerConfig.timerDecrement  = kFLEXIO_TimerDecSrcOnFlexIOClockShiftTimerOutput;  // 0  TIMCFG0.21-20=0,设置Timer decrement 和shift clock的时钟源待~
+    fxioTimerConfig.timerDisable    = kFLEXIO_TimerDisableNever;                                             // 0  TIMCFG0.14-12=0, 在 从不禁用timer
+    fxioTimerConfig.timerEnable     = kFLEXIO_TimerEnabledAlways;                      // 0 TIMCFG0.10-8=0, 总是使能 timer
+    fxioTimerConfig.timerReset      = kFLEXIO_TimerResetNever;                            // 0 TIMCFG0.18-16=0, timer计数器从不reset   
+    fxioTimerConfig.timerStart      = kFLEXIO_TimerStartBitDisabled;                      // 0  TIMCFG0.5-4=0, 无stop位
+    fxioTimerConfig.timerStop       = kFLEXIO_TimerStopBitDisabled;                     // 0  TIMCFG0.1=0,  无start bit
+
+ 
+    sum = (DEMO_FLEXIO_CLOCK_FREQUENCY * 2 / freq_Hz + 1) / 2;                  //DEMO_FLEXIO_CLOCK_FREQUENCY=12MHz
+    lowerValue = (sum * duty / 50 + 1) / 2;
+    upperValue                   = sum - lowerValue;
+    fxioTimerConfig.timerCompare = ((upperValue - 1) << 8) | (lowerValue - 1);    //TIMCMP0=value, 设置pwm的占空比值
+  
+
+
+
+
+
+

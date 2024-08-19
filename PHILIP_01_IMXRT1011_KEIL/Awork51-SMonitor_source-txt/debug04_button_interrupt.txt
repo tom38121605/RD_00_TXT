@@ -1,0 +1,161 @@
+
+
+=======================button外部中断按键初始化=============================
+
+flow：
+
+main  --> BOARD_InitBootPins  --> BOARD_InitPins --> CLOCK_EnableClock --> IOMUXC_SetPinMux --> IOMUXC_SetPinConfig
+
+main --> BOARD_InitBootPins -->   EnableIRQ -->  GPIO_PinInit -->  GPIO_PortEnableInterrupts    
+
+
+
+-------------------------------------------------------------------------------------------
+
+main()
+
+     sw_config = {  kGPIO_DigitalInput,      0,        kGPIO_IntRisingEdge,  };  
+
+    BOARD_InitBootPins();
+    //     BOARD_InitPins();
+
+            //CLOCK_EnableClock(kCLOCK_Iomuxc);        //设置CCGR4.3-2=3    
+                CLOCK_ControlGate(kCLOCK_Iomuxc, 3);    //设置引脚复用的时钟模式为常开（进入WAIT时也开）
+
+            //设置IO口P2.5为普通IO口，不设置入功能
+            IOMUXC_SetPinMux(IOMUXC_GPIO_SD_05_GPIO2_IO05, 0U); 
+ 
+            //设置P2.5为使能磁滞，不开opendrain，上拉100k，100MHz，驱动强度R0/4, 开工速度为慢速
+            IOMUXC_SetPinConfig(IOMUXC_GPIO_SD_05_GPIO2_IO05, 0x01B0A0U); 
+
+
+    //设置gpio2的时钟为常开，设置P2.5为输入，暂时先屏蔽P2.5的中断，再中断为下降沿触发
+    GPIO_PinInit(EXAMPLE_SW_GPIO, EXAMPLE_SW_GPIO_PIN, &sw_config);
+        CLOCK_ControlGate( kCLOCK_Gpio2, 3 );      //设置CCGR0.31-30=11， 设置GPIO2的时钟模式为常开（进入WAIT时也开）
+        GPIO2->IMR &= ~(1 << 5);                         //IMR.5=0, 不使能P2.5中断  
+        GPIO2->GDIR &= ~(1 << 5);                       //GDIR.5=0,  设置P2.5为输入  
+        GPIO2->EDGE_SEL.5=0;                               //屏蔽P2.5的中断触发（上升沿，高电平等）
+        GPIO2->ICR1  =3;                                       //中断设置下降沿触发等  （因上面屏蔽了，而且不使能，所以这里只是条件之一）
+
+
+    //使能P2口（P2.0-P2.15）中断
+    //EnableIRQ(EXAMPLE_SW_IRQ);  //72 , GPIO2_Combined_0_15_IRQn 的中断入口编号
+    //    NVIC_EnableIRQ(72);
+             NVIC->ISER[ 72 /32 ] =  1 << (  72%32  );
+
+    //使能GPIO2.5的中断
+    //GPIO_PortEnableInterrupts(EXAMPLE_SW_GPIO, 1U << EXAMPLE_SW_GPIO_PIN);    //GPIO2.5使能中断 (开中断)
+          GPIO2->IMR |= mask;  //GPIO2_IMR.5=1, 使能GPIO2.5的中断
+           
+
+    //while(1)
+
+
+
+-----------------------------------------------------------------
+
+//参数：72 , GPIO2_Combined_0_15_IRQn 的中断入口编号
+ __NVIC_EnableIRQ(  IRQn)
+   
+  if (IRQn >= 0)
+ 
+    __COMPILER_BARRIER();
+
+   //NVIC->ISER[((IRQn) >> 5)] =(1 << ((IRQn) & 0x1F));
+
+   NVIC->ISER[ 72 /32 ] =  1 << (  72%32  );
+
+    __COMPILER_BARRIER();
+  
+  
+
+
+ 
+
+ 
+
+ 
+-----------------------------------------
+
+//参考：rt1010的寄存器MAP： GPIO1,2,5  (0x401B8000u等)   P463
+//设置gpio2的时钟为常开，设置P2.5为输入，暂时先屏蔽P2.5的中断，再中断为下降沿触发
+//参数： GPIO2，5，  Config： ( 0，0, 3 )
+GPIO_PinInit(  *base,   pin,   *Config) 
+
+     instance = GPIO_GetInstance(GPIO2);  //根据IO口的地址，取得IO口的编号，即GPIO1后面的“2”
+
+    //CLOCK_EnableClock(s_gpioClock[2]);    
+        CLOCK_ControlGate( kCLOCK_Gpio2, 3 );      //设置CCGR0.31-30=11， 设置GPIO2的时钟模式为常开（进入WAIT时也开）
+
+    GPIO2->IMR &= ~(1 << 5);     //IMR.5=0, 不使能P2.5中断
+  
+    GPIO2->GDIR &= ~(1 << 5);                             //GDIR.5=0,  设置P2.5为输入  
+ 
+    GPIO_SetPinInterruptConfig(GPIO2, 5, 3);      //设置中断模式为3，上升沿中断
+    //     GPIO_PinSetInterruptConfig(GPIO2, 5, 0);
+              GPIO2->EDGE_SEL.5=0;              //屏蔽P2.5的中断触发（上升沿，高电平等）
+              GPIO2->ICR1  =3;                      //中断设置下降沿触发等  （因上面屏蔽了，而且不使能，所以这里只是条件之一）
+
+
+
+----------------------------------------------------
+
+
+//参考rt1020的寄存器P374：IOMAXC_SW_MUX_CTL_PAD_GPIO_EMC_02   
+//设置IO口P02为普通IO口，并关闭输入功能
+//参数： 0x401F8070U, 0x5U, 0, 0,    0x401F8120U,0，  0      // 0x401F8070U  -- 是指P02的MUX模式寄存器
+IOMUXC_SetPinMux( muxRegister, muxMode,  inputRegister,        inputDaisy,  configRegister,  inputOnfield)
+     
+    //muxRegister = IOMUXC_SW_MUX_CTL_PAD_MUX_MODE(muxMode) | IOMUXC_SW_MUX_CTL_PAD_SION(inputOnfield);
+       muxRegister.2-0=5 | muxRegister.4=0 ;    //bit2-0=101,  做普通IO口; bit4=0, 关闭输入
+
+    if (inputRegister != 0UL)   //这里是0，固跳过
+        *((volatile uint32_t *)inputRegister) = inputDaisy;
+
+
+//参考rt1020的寄存器P374：IOMAX_SW_PAD_CTL_PAD_GPIO_EMC_11 
+//设置P02为k使能磁滞，不开opendrain，上拉100k，100MHz，驱动强度R0/4, 开工速度为慢速
+//参数： 0x401F8070U, 0x5U, 0, 0,    0x401F8120U,     0x01B0A0U
+IOMUXC_SetPinConfig( muxRegister, muxMode,  inputRegister,    inputDaisy,  configRegister,  configValue)
+
+     configRegister = configValue=0x01B0A0;      //bit16=1, 使能磁滞
+                                                                         //bit15-14=10, 100k上拉；bit13=1待理解，bit12=1待理解；
+                                                                        //bit11=0，不开opendrain; bit7-6=10, 速度100MHz；
+                                                                        //bit5-3=100, 驱动强度=R0/4待理解；BIT0=0，切换速度为慢速。
+
+
+=======================button外部中断--接收按键信息=============================
+
+flow：
+
+main  --> EXAMPLE_GPIO_IRQHandler --> g_InputSignal  --> while --> GPIO_PinRead --> printf
+
+
+----------------------------------------------------------------
+
+main
+
+     。。。
+
+     while(1)
+
+        if (g_InputSignal)
+
+            delay();
+            if (1 == GPIO_PinRead(EXAMPLE_SW_GPIO, EXAMPLE_SW_GPIO_PIN))
+                PRINTF("%s is turned on.\r\n", EXAMPLE_SW_NAME);
+
+            g_InputSignal = false;
+
+
+----------------------------------
+
+//GPIO2.5外边中断入口函数
+EXAMPLE_GPIO_IRQHandler(void)
+   
+    GPIO_PortClearInterruptFlags(EXAMPLE_SW_GPIO, 1U << EXAMPLE_SW_GPIO_PIN);
+ 
+    g_InputSignal = true;
+ 
+
+

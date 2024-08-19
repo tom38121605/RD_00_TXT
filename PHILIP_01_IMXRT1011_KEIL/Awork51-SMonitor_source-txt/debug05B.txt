@@ -1,0 +1,163 @@
+typedef struct {
+  __IO uint32_t HC[8];                             /**< Control register for hardware triggers, array offset: 0x0, array step: 0x4 */
+  __I  uint32_t HS;                                /**< Status register for HW triggers, offset: 0x20 */
+  __I  uint32_t R[8];                              /**< Data result register for HW triggers, array offset: 0x24, array step: 0x4 */
+  __IO uint32_t CFG;                               /**< Configuration register, offset: 0x44 */
+  __IO uint32_t GC;                                /**< General control register, offset: 0x48 */
+  __IO uint32_t GS;                                /**< General status register, offset: 0x4C */
+  __IO uint32_t CV;                                /**< Compare value register, offset: 0x50 */
+  __IO uint32_t OFS;                               /**< Offset correction value register, offset: 0x54 */
+  __IO uint32_t CAL;                               /**< Calibration value register, offset: 0x58 */
+} ADC_Type;
+
+
+   #define IOMUXC_GPIO_AD_14_GPIOMUX_IO28       0x401F8010U, 0x5U, 0, 0, 0x401F80C0U
+
+
+typedef struct _adc_config
+{
+    bool enableOverWrite;                                                      //Enable the overwriting
+    bool enableContinuousConversion;                      
+    bool enableHighSpeed;                                
+    bool enableLowPower;                                 
+    bool enableLongSample;                                                   //Enable the long sample mode           
+    bool enableAsynchronousClockOutput;                    
+    adc_reference_voltage_source_t referenceVoltageSource;  
+    adc_sample_period_mode_t samplePeriodMode;               //Select the sample period in long sample mode or short mode 
+    adc_clock_source_t clockSource;  
+    adc_clock_driver_t clockDriver;  
+    adc_resolution_t resolution;    
+} adc_config_t;
+
+typedef struct _adc_channel_config
+{
+    uint32_t channelNumber;                                     //0-31                                                    
+    bool enableInterruptOnConversionCompleted;     //Generate an interrupt request once the conversion is completed
+} adc_channel_config_t;
+
+
+-------------
+
+typedef enum _adc_reference_voltage_source
+{
+    kADC_ReferenceVoltageSourceAlt0 = 0U,     //For external pins pair of VrefH and VrefL 
+} adc_reference_voltage_source_t;
+
+
+ADC_GetDefaultConfig(*config) 
+
+    config->enableAsynchronousClockOutput = true;      //输出同步时钟
+    config->enableOverWrite               = false;                //不覆盖 
+    config->enableContinuousConversion    = false;        //不连续采样
+    config->enableHighSpeed               = false;               //不高速
+    config->enableLowPower                = false;               //不低功耗
+    config->enableLongSample              = false;             //不长采样
+    config->referenceVoltageSource        = kADC_ReferenceVoltageSourceAlt0;    //00，设置adc参考电压为VL+VH (本芯片只有这一种)
+    config->samplePeriodMode              = kADC_SamplePeriod2or12Clocks;        //0，设置采样频率
+    config->clockSource                   = kADC_ClockSourceAD;      //3，设置adc时钟
+    config->clockDriver                   = kADC_ClockDriver1;          //0，设置分频率
+    config->resolution                    = kADC_Resolution12Bit;      //2，设置adc精度
+ 
+
+#define ADC1_BASE                            (0x400C4000u)
+#define ADC1                                     ((ADC_Type *)ADC1_BASE)
+#define DEMO_ADC_BASE                  ADC1
+
+
+#define ADC_CFG_AVGS_MASK                       (0xC000U)  //bit15-14, 设置是否平均
+#define ADC_CFG_AVGS_SHIFT                       (14U)
+
+#define ADC_CFG_ADTRG_MASK                      (0x2000U)    //bit13，选择软件触发还是硬件触发
+#define ADC_CFG_ADTRG_SHIFT                      (13U)
+
+#define ADC_CFG_OVWREN_MASK                      (0x10000U)
+#define ADC_CFG_OVWREN_SHIFT                     (16U)
+
+#define ADC_CFG_ADLSMP_MASK                      (0x10U)
+#define ADC_CFG_ADLSMP_SHIFT                     (4U)
+
+#define ADC_CFG_ADLPC_MASK                       (0x80U)
+#define ADC_CFG_ADLPC_SHIFT                      (7U)
+
+#define ADC_CFG_ADHSC_MASK                       (0x400U)
+#define ADC_CFG_ADHSC_SHIFT                      (10U)
+
+
+-------------
+
+#define ADC_GC_ADCO_MASK                         (0x40U)
+#define ADC_GC_ADCO_SHIFT                        (6U)
+
+#define ADC_GC_ADACKEN_MASK                      (0x1U)
+#define ADC_GC_ADACKEN_SHIFT                     (0U)
+
+#define ADC_CFG_ADTRG_MASK                       (0x2000U)
+#define ADC_CFG_ADTRG_SHIFT                      (13U)
+
+#define ADC_GC_CAL_MASK                          (0x80U)
+#define ADC_GC_CAL_SHIFT                         (7U)
+
+#define ADC_GS_CALF_MASK                         (0x2U)
+#define ADC_GS_CALF_SHIFT                         (1U)
+
+#define FSL_FEATURE_ADC_CONVERSION_CONTROL_COUNT (8)
+
+
+typedef enum _adc_status_flags
+{
+    kADC_ConversionActiveFlag  = ADC_GS_ADACT_MASK, /*!< Conversion is active,not support w1c. */
+    kADC_CalibrationFailedFlag = ADC_GS_CALF_MASK,  /*!< Calibration is failed,support w1c. */
+    kADC_AsynchronousWakeupInterruptFlag =
+        ADC_GS_AWKST_MASK, /*!< Asynchronous wakeup interrupt occurred, support w1c. */
+} adc_status_flags_t;
+
+const uint32_t g_Adc_12bitFullRange = 4096U;
+
+#define DEMO_ADC_BASE          ADC1
+#define DEMO_ADC_USER_CHANNEL  14U
+#define DEMO_ADC_CHANNEL_GROUP 0U
+
+#define FSL_FEATURE_ADC_CONVERSION_CONTROL_COUNT (8)
+
+#define ADC_HC_AIEN_MASK                         (0x80U)
+#define ADC_HC_AIEN_SHIFT                        (7U)
+
+
+---
+
+#define ADC_HC_ADCH_MASK                         (0x1FU)
+#define ADC_HC_ADCH_SHIFT                        (0U)
+#define ADC_HC_ADCH(x)                         （ x << ADC_HC_ADCH_SHIFT)    & ADC_HC_ADCH_MASK    
+
+
+------------
+
+    /* CCM CCGR4 */
+
+    kCLOCK_Iomuxc       = (4U << 8U) | CCM_CCGR4_CG1_SHIFT,  /*!< CCGR4, CG1   */
+ 
+
+------------
+
+
+#define IOMUXC_GPIO_11_GPIOMUX_IO11             0x401F8090U, 0x5U, 0, 0, 0x401F8140U
+
+#define IOMUXC_GPIO_AD_14_GPIOMUX_IO28       0x401F8010U, 0x5U, 0,     0, 0x401F80C0U
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+     

@@ -1,0 +1,940 @@
+﻿  
+tmr
+=======================IIS初始化的流程===========================
+
+flow：
+
+main --> BOARD_InitBootPins --> BOARD_InitPins --> CLOCK_EnableClock --> IOMUXC_SetPinMux --> IOMUXC_SetPinConfig
+
+main --> BOARD_InitBootPins -->   CLOCK_SetMux   --> CLOCK_SetDiv --> BOARD_EnableSaiMclkOutput
+         --> SAI_Init   --> SAI_TransferTxCreateHandle   -->  txHandle   -->  s_saiHandle
+         --> SAI_GetClassicI2SConfig  --> saiConfig  --> SAI_TransferTxSetConfig  -->  txHandle
+         --> SAI_TxSetBitClockRate        
+
+
+-------------------------------------------------------------------------------------------
+ 
+main()
+
+
+    //SAI引脚初始化, 如:P1.3为SAI1_DATARX, 使能输入;设置P1.3为100k下拉,使能opendrain,150MHz,驱动强度R0/4,开工速度为慢速
+    //BOARD_InitBootPins();
+         BOARD_InitPins(); 
+
+    //设置SAI1的时钟和分频  （待理解，先跳过）
+    CLOCK_SetMux(kCLOCK_Sai1Mux, DEMO_SAI1_CLOCK_SOURCE_SELECT);
+    CLOCK_SetDiv(kCLOCK_Sai1PreDiv, DEMO_SAI1_CLOCK_SOURCE_PRE_DIVIDER);
+    CLOCK_SetDiv(kCLOCK_Sai1Div, DEMO_SAI1_CLOCK_SOURCE_DIVIDER);
+
+    //GPR_GPR1.19  =1, 设置SAI1的MCLK为输出  （参考P207）
+    BOARD_EnableSaiMclkOutput(true);    
+          IOMUXC_GPR->GPR1 |= IOMUXC_GPR_GPR1_SAI1_MCLK_DIR_MASK;  //GPR1.19=1   
+
+    // SAI1初始化，使能SAI1时钟CCGR?.3-2=3, TCSR.10-8=000 关FIFO的3个中断使能(request,warn,err)
+        TCSR.1-0=00 关DMA的2个中断使能(request,warn), RCSR.10.9.8.1.0=00000 也同样关5个中断使能
+    SAI_Init(DEMO_SAI);
+    
+
+    // 设置txHandle参数部分1/3，并把txhandle赋值给数组s_saiHandle[1][0]，映射设置I2S中断SAI1_DriverIRQHandler里面的   
+        发送第二层子函数s_saiTxIsr=SAI_TransferTxHandleIRQ 和第三层子函数tx_callback, 使能sai1的tx的irq
+    SAI_TransferTxCreateHandle(DEMO_SAI, &txHandle, tx_callback, NULL);
+
+    //设置rxhand，映射设置I2S中断SAI1_DriverIRQHandler里面的接收第二,第三层子函数
+       s_saiRxIsr，rx_callback, 使能sai1的rx的irq
+    SAI_TransferRxCreateHandle(DEMO_SAI, &rxHandle, rx_callback, NULL);
+
+    //给config赋初值（用于写入寄存器和给txHandle赋值），设置channelmask, 同异步，主从机，位参数，
+       同步性参数，串行数据参数，fifio参数   --待理解
+    //SAI_GetClassicI2SConfig(&saiConfig, DEMO_AUDIO_BIT_WIDTH, kSAI_Stereo, 1U << DEMO_SAI_CHANNEL);
+           SAI_GetCommonConfig(config, bitWidth, kSAI_Stereo, saiChannelMask);
+
+    saiConfig.syncMode    = DEMO_SAI_TX_SYNC_MODE;    // TCR2.31-30=00, 异步
+    saiConfig.masterSlave = DEMO_SAI_MASTER_SLAVE;     //0，为主机, 做主机时tcr4.0=1, 由master内部产生sync
+                                                                                         （已理解，使用内部mclk，并输出时钟 ）
+
+    // 设置txhandle参数部分2/3，把config中的参数写入到寄存器和赋值给txhandle( bitwidth, watermark, channel*4)
+        TCR3.17-16=01 , 使能信道0， 设置bit参数(TCR2),设置SerialData参数(TCR4)，设置sync参数(TCR4)，设置fifo参数之一(TCR4) 
+    SAI_TransferTxSetConfig(DEMO_SAI, &txHandle, &saiConfig);
+
+    saiConfig.syncMode = DEMO_SAI_RX_SYNC_MODE;                      //同步
+    SAI_TransferRxSetConfig(DEMO_SAI, &rxHandle, &saiConfig);
+
+
+    //设置 TCR2.7-0 设置tx的bclk的分频率--simple easy
+    SAI_TxSetBitClockRate( DEMO_SAI, DEMO_AUDIO_MASTER_CLOCK, 
+                                       DEMO_AUDIO_SAMPLE_RATE,           // 16000 Hz
+                                       DEMO_AUDIO_BIT_WIDTH,                // 16 bit
+                                       DEMO_AUDIO_DATA_CHANNEL);       // 2 
+
+    SAI_RxSetBitClockRate(DEMO_SAI, DEMO_AUDIO_MASTER_CLOCK, DEMO_AUDIO_SAMPLE_RATE, DEMO_AUDIO_BIT_WIDTH,
+                          DEMO_AUDIO_DATA_CHANNEL);
+
+    // master clock configurations   (空函数，跳过)
+    BOARD_MASTER_CLOCK_CONFIG();
+
+    //功放初始化
+    if (CODEC_Init(&codecHandle, &boardCodecConfig) != kStatus_Success)
+        assert(false);
+
+
+    //功放设置音量
+    if (CODEC_SetVolume(&codecHandle, kCODEC_PlayChannelHeadphoneLeft | kCODEC_PlayChannelHeadphoneRight,
+                        DEMO_CODEC_VOLUME) != kStatus_Success)
+        assert(false);
+
+
+    while(1) 
+
+
+------------------------------------------
+  
+
+//设置 TCR2.7-0 设置tx的bclk的分频率
+//输入参数： SAI1，MASTER_CLOCK, SAMPLE_RATE，BIT_WIDTH，DATA_CHANNEL   //12.288Mhz, 48Khz, 32, 2
+//输出参数:  TCR2.7-0 设置tx的bclk的分频率
+SAI_TxSetBitClockRate(*base,  sourceClockHz,  sampleRate, bitWidth, channelNumbers)
+
+    tcr2         = base->TCR2;
+    bitClockDiv  = 0;
+
+    bitClockFreq = sampleRate * bitWidth * channelNumbers;  // 取得bclk
+    //assert(sourceClockHz >= bitClockFreq);    //断言bckl<Mclk
+
+    tcr2 &= ~I2S_TCR2_DIV_MASK;   // tcr2.7-0=0
+
+    //计算分频率
+    bitClockDiv = sourceClockHz / bitClockFreq;  // mclk/bclk
+
+    //检查分频率是否合规，忽略
+    //if (bitClockDiv == 0)
+    //    bitClockDiv++;
+
+    //检查分频率是否合规，忽略
+    //if ((sourceClockHz / bitClockDiv) > bitClockFreq)
+    //    bitClockDiv++;
+
+    //设置分频率
+    tcr2 |= I2S_TCR2_DIV(bitClockDiv / 2 - 1);    //设置tcr2.7-0
+
+    base->TCR2 = tcr2;
+
+
+-------------------
+
+// 设置txhandle参数部分2/3，把config中的参数写入到寄存器和赋值给txhandle; 
+    TCR3.17-16=01 , 使能信道0， 设置bit参数(TCR2),设置SerialData参数(TCR4)，设置sync参数(TCR4)，设置fifo参数之一(TCR4) 
+
+//输入参数： SAI1， saiConfig       
+//输出参数： handle
+SAI_TransferTxSetConfig( *base,  *handle,  *config)
+ 
+    assert(config->channelNums <= 0 );
+
+    handle->bitWidth = config->frameSync.frameSyncWidth;    // 32
+    handle->watermark = config->fifo.fifoWatermark;               // 32除2  (这里的32/2是指多少个采样,一个采样两声道32位x2=8字节,
+                                                                                                    16个采样水位线是128字节)
+
+    //选择channel，  设置bit参数(TCR2),设置SerialData参数(TCR4)，设置sync参数(TCR4)，设置fifo参数之二(TCR4) 
+    SAI_TxSetConfig(base, config);
+
+    handle->channel = config->startChannel;     // 0, TDR0  （就是指功放上的txdata0）
+ 
+     /* used for multi channel */
+    handle->channelMask = config->channelMask;      //  1，使能TDR0
+    handle->channelNums = config->channelNums;    //  1，共1个发送引脚
+    handle->endChannel  = config->endChannel;        //  0,  endChannel也是startChannel，就是TDR0
+
+--------------------
+
+//TCR3.17-16=01  , 使能信道0，  设置bit参数(TCR2),设置SerialData参数(TCR4)，设置sync参数(TCR4)，设置fifo参数(TCR4) 之二
+//输入参数： SAI1， saiConfig     
+//输出：  saiConfig，TCR3, TCR2, TCR4, TCR5, TMR    
+SAI_TxSetConfig( *base,  *config)
+ 
+    assert( 2 != -1 );     //SAI_CHANNEL_COUNT
+
+    uint8_t    i           = 0;
+    uint32_t  val        = 0;
+    uint8_t    channelNums = 0;
+
+    // reset i2s transmitter  
+    //SAI_TxReset(base);
+        base->TCSR = I2S_TCSR_SR_MASK | I2S_TCSR_FR_MASK;   //TCSR.24,25=1,1 ,  软复位 transmitter，复位fifo
+        base->TCSR &= ~I2S_TCSR_SR_MASK;                              //TCSR.24=0 ， 清复位
+
+        //清零所有 Tx register 
+        base->TCR2 = 0;
+        base->TCR3 = 0;
+        base->TCR4 = 0;
+        base->TCR5 = 0;
+        base->TMR  = 0;     //待理解
+
+    //如果channel为0，则把channel设为1  （至少要有一个channel）
+    if (config->channelMask == 0)
+        *->channelMask = 1 << *>startChannel=1<<0;  
+
+    for (i = 0; i < 2; i++)  
+
+        //取得channel数量，取得最后一个通道  （因channelMask=1<<0，固channelNums=1，endChannel=0 ）
+        if (   IS_SAI_FLAG_SET(  1 << i,   1<< channelMask   ）  )      //如果1<<i 等于1<<channelMask（=0）, 则下面
+            channelNums++;                                       
+            config->endChannel = i;                             
+
+    for (i = 0; i < 2; i++)    
+        //取得第一个通道  （因channelMask=1<<0，固startChannel=0）
+        if ( IS_SAI_FLAG_SET(  1 << i,   1<< channelMask    ))         //如果1<<i 等于1<<channelMask（=0）, 则下面
+            config->startChannel = i;                                              //startChannel=0
+            break;                                                                            //确定第一个后，要马上退出
+
+    config->channelNums = channelNums;    // 1
+
+    if (config->channelNums > 1)                              //因等于1，不执行下面的
+        base->TCR4 &= ~I2S_TCR4_FCOMB_MASK;     //TCR4.27-26=00, 不使能combin 模式 待理解
+
+    //使能所选择的channel
+    base->TCR3 &= ~I2S_TCR3_TCE_MASK;                    //TCR3.17-16=00  , 先清0
+    base->TCR3 |= I2S_TCR3_TCE(channelMask<<0);      //TCR3.17-16=01  , 使能信道0
+
+    if (config->syncMode == kSAI_ModeAsync)       //如果是0，异步
+        val = base->TCR2;  
+        val &= ~I2S_TCR2_SYNC_MASK;                   //清零TCR2.31-30 
+        base->TCR2 = val | I2S_TCR2_SYNC(0);         //设置TCR2.31-30=00, 异步
+ 
+    if (config->syncMode == kSAI_ModeSync)       //如果是1，同步   
+        val = base->TCR2;
+        val &= ~I2S_TCR2_SYNC_MASK;                  //清零TCR2.31-30 
+        base->TCR2 = (val | I2S_TCR2_SYNC(1));       //设置TCR2.31-30=01,   同步
+
+        // If sync with Rx, should set Rx to async mode  
+        val = base->RCR2;
+        val &= ~I2S_RCR2_SYNC_MASK;                       //清零RCR2.31-30 
+        base->RCR2 = ( val | I2S_RCR2_SYNC(0) );         //设置RCR2.31-30=01,   异步
+
+
+    // 设置bit参数(TCR2)，bclk和mclk，时钟相位，使用master时钟还是slaver时钟
+    SAI_TxSetBitclockConfig(base, config->masterSlave, &config->bitClock);
+
+    //TCR5设置Word 0 Width等 待理解，设置SerialData参数(TCR4)， TCR4.20-16=1 每帧2个字节, 
+      TCR4.4=1  高位在前, TCR4.5=1,输出模式, 缺省时为低电平 （而不是三态）
+    SAI_TxSetSerialDataConfig(base, &config->serialData);
+
+     // 设置sync参数（TCR4），tcr4.2=0 持续产生内部帧sync, tcr4.3=1 , 早sync, tcr4.1=1 ，低电平sync, tcr4.0=1 ，
+        由master内部产生sync,tcr4.12-8=15 ，Sync WidtchannelMaskh为16   (待理解)
+    SAI_TxSetFrameSyncConfig(base, config->masterSlave, &config->frameSync);
+ 
+    //设置fifo参数(TCR4)，tcr4.28=1  当fifo Error 重复发送, tcr4.25-24=00 不使能FIFO packing,TCR1.4-0=32/2, 设置tx水位线 
+    SAI_TxSetFifoConfig(base, &config->fifo);
+
+ 
+------
+
+
+//设置fifo参数，tcr4.28=1, 使能Continue on Error， tcr4.25-24=00,  不使能FIFO packing ，TCR1.4-0=32/2, 设置tx水位线  待理解
+//输入参数： SAI1，saiConfig->fifo  
+SAI_TxSetFifoConfig(  *base,  *config)
+  
+    assert(config->fifoWatermark <= (0x1F >> 0));    // 32除2 <=31
+  
+    tcr4 = base->TCR4; 
+
+    //tcr4.27-26=00, 取消combin 
+    tcr4 &= ~I2S_TCR4_FCOMB_MASK;
+    tcr4 |= I2S_TCR4_FCOMB(0); 
+ 
+
+    //tcr4.28=1，遇到fifo错误时，重复发送同一个字节
+    tcr4 &= ~I2S_TCR4_FCONT_MASK;   //tcr4.28=0
+    // 当TMR > 0 时不要设置FCONT = 1  
+    if (base->TMR == 0)    //因TMR=0，执行下面
+        tcr4 |= I2S_TCR4_FCONT(1);   //tcr4.28=1 
+  
+    //tcr4.25-24=00,  不使能FIFO packing 
+    tcr4 &= ~I2S_TCR4_FPACK_MASK;
+    tcr4 |= I2S_TCR4_FPACK(config->fifoPacking);  //0
+ 
+    base->TCR4 = tcr4;
+
+     //TCR1.4-0=32/2, 设置tx水位线  已理解 
+     base->TCR1 = (base->TCR1 & (~I2S_TCR1_TFW_MASK))    |    I2S_TCR1_TFW(config->fifoWatermark);
+ 
+
+---------
+
+
+//tcr4.2=0 持续产生内部帧sync, tcr4.3=1  早sync, tcr4.1=1  低电平sync, tcr4.0=1 ，
+   由master内部产生sync,tcr4.12-8=15 ，Sync Width为16   (待理解)
+//输入参数： SAI1，0， saiConfig->frameSync    
+SAI_TxSetFrameSyncConfig(  *base,  masterSlave,  *config)
+
+    assert(  (32 - 1) <= ( 1f00>> 8 )  );
+
+    uint32_t tcr4 = base->TCR4;
+
+    //tcr4.2=0 持续产生内部帧sync  待理解
+    tcr4 &= ~I2S_TCR4_ONDEM_MASK;
+    tcr4 |= I2S_TCR4_ONDEM(config->fifoCombine);
+
+    tcr4 &= ~(I2S_TCR4_FSE_MASK | I2S_TCR4_FSP_MASK | I2S_TCR4_FSD_MASK | I2S_TCR4_SYWD_MASK);
+
+    tcr4 |= I2S_TCR4_FSE(1)                                                                                // tcr4.3=1 , 早sync
+               | I2S_TCR4_FSP(1)                                                                             // tcr4.1=1 ，低电平sync， 待理解 
+               | I2S_TCR4_FSD(((masterSlave == 0) || (masterSlave == 2)) ? 1 : 0)      // tcr4.0=1 ，由master内部产生sync  待理解
+               | I2S_TCR4_SYWD(32 - 1);                                                                  // tcr4.12-8=32 ，Sync Width为32   
+
+    base->TCR4 = tcr4;
+
+
+-----------
+
+//TCR5设置Word 0 Width等 待理解，TCR4.20-16=1 每帧2个字节, TCR4.4=1  高位在前, TCR4.5=1,输出模式, 缺省时为低电平 （而不是三态）
+//输入参数： SAI1， saiConfig->serialData    
+SAI_TxSetSerialDataConfig( *base,  *config)  
+
+    base->TCR5 = I2S_TCR5_WNW(32 - 1)         //TCR5.28-24 = 32-1  Word N Width  待理解
+                           | I2S_TCR5_W0W(32 - 1)        //TCR5.20-16 = 32-1  Word 0 Width  待理解
+                           | I2S_TCR5_FBT(32 - 1);          //TCR5.12-8 = 32-1   First Bit Shifted  待理解
+
+    base->TMR = config->dataMaskedWord;    //TMR=0, 立体声    //待理解 （是否为一个声道也不屏蔽）
+
+
+     /* ERR05144: not set FCONT = 1 when TMR > 0, the transmit shift register may not load correctly that will cause TX
+     * not work */
+
+    tcr4 = base->TCR4;
+
+    if (config->dataMaskedWord > 0)          //因等于0, 不执行下(0表示stereo)
+        tcr4 &= ~I2S_TCR4_FCONT_MASK;    //tcr4.28=0 , 遇到err重复发送本字节
+
+    //TCR4.20-16=1 每帧2个word（这里指左右两个声道，已验证，根据bclk的计算公式） ,   TCR4.4=1  高位在前
+    tcr4 &= ~(I2S_TCR4_FRSZ_MASK | I2S_TCR4_MF_MASK);
+    tcr4 |= I2S_TCR4_FRSZ(2 - 1) | I2S_TCR4_MF(1);       //TCR4.20-16=1,  (1+1)=2个(指左右声道数2个)， TCR4.4=1，高位在前
+
+    //TCR4.5=1， 输出模式，缺省时为低电平 （而不是三态）
+    tcr4 &= ~I2S_TCR4_CHMOD_MASK;
+    tcr4 |= I2S_TCR4_CHMOD(1); 
+
+    base->TCR4 = tcr4;
+
+
+-------
+
+//设置bclk和mclk，时钟相位，使用哪一边的时钟
+//输入参数： SAI1，0， saiConfig->bitClock       
+SAI_TxSetBitclockConfig(  *base,  masterSlave,   *config)
+
+    uint32_t tcr2 = base->TCR2;
+
+    if (  (masterSlave == 0) || (masterSlave == 2)  )  //masterSlave=0，满足条件，执行下面
+  
+        tcr2 &= ~(bit24 | bit25 | bit28 | bit29 | bit26-27);  //清零 bit.24,25,28,29,26-27 = 0,0,0,0,00
+
+        tcr2 |= I2S_TCR2_BCD(1)                                           //TCR2.24=1，主机模式，bck由iis内部产生
+                   | I2S_TCR2_BCP(config->bclkPolarity)            //TCR2.25=1，时钟采样为下降沿 (输出)   
+                   | I2S_TCR2_BCI(config->bclkInputDelay)        //TCR2.28=0，BCI待理解  （关于bck）   
+                   | I2S_TCR2_BCS(config->bclkSrcSwap)          //TCR2.29=0，  BCS关于TX和RX时钟共用，待理解
+                   | I2S_TCR2_MSEL(config->bclkSource);         //TCR2.27-26=01，选 (MCLK) 1 option，待理解  
+                                                                                          如果时外部时钟则本设置无效   
+    else
+
+        tcr2 &= ~(I2S_TCR2_BCD_MASK);                     //TCR2.24=0，从机模式，bck由iis外部产生
+        tcr2 |= I2S_TCR2_BCP(config->bclkPolarity);     //TCR2.25=1，时钟采样为下降沿 (输出)   
+  
+
+    base->TCR2 = tcr2;  
+
+
+---------------
+
+// 设置txHandle参数部分1/3，并把txhandle赋值给数组s_saiHandle[1][0]，映射设置I2S中断SAI1_DriverIRQHandler里面的   
+    发送第二层子函数s_saiTxIsr=SAI_TransferTxHandleIRQ 和第三层子函数tx_callback, 使能sai1的tx的irq
+// 输入参数：SAI1, txHandle, tx_callback, NULL
+// 输出参数：txhandle
+SAI_TransferTxCreateHandle(*base,  *handle, callback,  *userData)
+
+   memset(handle, 0, all);
+
+    // s_saiHandle[SAI_GetInstance(base)][0] = handle;
+        s_saiHandle[1][0] = handle;    //SAI1的句柄指针（前面的1表示SAI1），指向handle  (二维数组后面的0，表示是TX)
+
+    handle->callback = callback;
+    handle->userData = userData;    //无作用，忽略，跳过
+    handle->base     = base;             //SAI1
+
+
+    // 发送中断函数指针设置 （不是中断入口函数，相当于入口函数里面的第二层子函数）
+    s_saiTxIsr = SAI_TransferTxHandleIRQ;
+
+    // 使能iis的tx中断    //P40页
+    // EnableIRQ(s_saiTxIRQ[SAI_GetInstance(base)]);
+    //       EnableIRQ(SAI1_IRQn);
+    //              NVIC_EnableIRQ(56);                //P40页       
+                          NVIC->ISER[1] =1<< (24);   //使能tx中断 （也同时使能rx中断）(开启I2S的总中断)
+  
+ 
+---------------
+
+//参考： TCSR   P1046
+// SAI1初始化，使能SAI1时钟CCGR?.3-2=3, TCSR.10-8=000 关FIFO的3个中断使能(request,warn,err)
+    TCSR.1-0=00 关DMA的2个中断使能(request,warn), RCSR.10.9.8.1.0=00000 也同样关5个中断使能
+//参数：SAI1
+SAI_Init( *base)
+ 
+    //使能SAI时钟
+    CLOCK_EnableClock(s_saiClock[SAI_GetInstance(base)]); 
+             //CLOCK_EnableClock(kCLOCK_Iomuxc);    //设置CCGR?.3-2=3
+                  CLOCK_ControlGate(kCLOCK_Iomuxc, 3);    //设置SAI1的时钟模式为常开（进入WAIT时也开）
+ 
+    //TCSR.10-8=000 关FIFO的3个中断使能(request,warn,err)，TCSR.1-0=00 关DMA的2个中断使能(request,warn)
+    base->TCSR &=  ~(bit8 | bit9 | bit10 | bit0 | bit1);   //bit 10-8=000,  bit1-0=00
+
+    //RCSR.10-8=000 关FIFO的3个中断使能(request,warn,err)，RCSR.1-0=00 关DMA的2个中断使能(request,warn)
+    base->RCSR &=  ~(bit8 | bit9 | bit10 | bit0 | bit1);   //bit 10-8=000,  bit1-0=00
+
+
+-------------------------------------------------------------------
+
+//SAI引脚初始化, 如:P1.3为SAI1_DATARX, 使能输入;设置P1.3为100k下拉,使能opendrain,150MHz,驱动强度R0/4,开工速度为慢速
+BOARD_InitPins( )
+
+    //CLOCK_EnableClock(kCLOCK_Iomuxc);             //设置CCGR4.3-2=3
+         CLOCK_ControlGate(kCLOCK_Iomuxc, 3);    //设置引脚复用的时钟模式为常开（进入WAIT时也开）
+
+  //设置IO口P1.3为SAI1_DATARX， 使能输入
+  IOMUXC_SetPinMux(IOMUXC_GPIO_03_SAI1_RX_DATA00, 1U);    
+
+  IOMUXC_SetPinMux(IOMUXC_GPIO_04_SAI1_TX_DATA00, 1U);     
+  IOMUXC_SetPinMux(IOMUXC_GPIO_06_SAI1_TX_BCLK, 1U);         
+  IOMUXC_SetPinMux(IOMUXC_GPIO_07_SAI1_TX_SYNC, 1U);       
+  IOMUXC_SetPinMux(IOMUXC_GPIO_08_SAI1_MCLK, 1U);            
+
+  //设置P1.3为100k下拉，使能opendrain，150MHz，驱动强度R0/4, 开工速度为慢速
+  IOMUXC_SetPinConfig(IOMUXC_GPIO_03_SAI1_RX_DATA00, 0x18A0U); 
+
+  IOMUXC_SetPinConfig(IOMUXC_GPIO_04_SAI1_TX_DATA00, 0x10A0U);    //不使能opendrain
+  IOMUXC_SetPinConfig(IOMUXC_GPIO_06_SAI1_TX_BCLK, 0x10A0U);        //不使能opendrain
+  IOMUXC_SetPinConfig(IOMUXC_GPIO_07_SAI1_TX_SYNC, 0x10A0U);       //不使能opendrain
+  IOMUXC_SetPinConfig(IOMUXC_GPIO_08_SAI1_MCLK, 0x10A0U);            //不使能opendrain
+
+
+------------------  0x401F8078U, 0x1U, 0, 0, 0x401F8128U
+
+//参考rt1010RM的寄存器P314：IOMUXC_SW_MUX_CTL_PAD_GPIO_03
+//设置IO口P1.3为SAI1_DATARX， 使能输入
+//参数：  0x401F80B0, 0, 0, 0, 0x401F8160,       1          // 0x401F80B0  -- 是指P1.3的MUX模式寄存器 
+IOMUXC_SetPinMux( muxRegister, muxMode,  inputRegister,        inputDaisy,  configRegister,  inputOnfield)
+ 
+       muxRegister.2-0=muxMode=0 | muxRegister.4=inputOnfield=1 ;    //bit2-0=0,  P1.3做SAI1_DATARX; bit4=1, 使能输入
+
+    if (inputRegister != 0UL)   //这里是0，固跳过
+        *((volatile uint32_t *)inputRegister) = inputDaisy;
+ 
+
+----------------
+
+//参考rt1010RM的寄存器P399：IOMUXC_SW_PAD_CTL_PAD_GPIO_03
+//设置P1.3为100k下拉，使能opendrain，150MHz，驱动强度R0/4, 开工速度为慢速
+//参数： 0x401F80B0U, 0x0U, 0, 0, 0x401F8160U，        0x18A0       // 0x401F8160U 是P1.3的config寄存器
+IOMUXC_SetPinConfig( muxRegister, muxMode,  inputRegister,    inputDaisy,  configRegister,  configValue)
+ 
+     configRegister = configValue=0x18A0;      //bit16=0, 不使能磁滞 
+                                                                      //bit15-14=00, 100k下拉；bit13=0待理解，bit12=1待理解；
+                                                                      //bit11=1，开opendrain; bit7-6=10, 速度150MHz；
+                                                                      //bit5-3=100, 驱动强度=R0/4待理解；BIT0=0，切换速度为慢速。
+ 
+
+
+
+====================IIS 发出数据流程=============================
+
+write flow：
+
+main --> SAI_TransferSendNonBlocking --> (xfer) -->  txHandle  --> SAI_TxEnableInterrupts --> SAI_TxEnable
+
+         (TX fiforequest irq)  --> SAI1_DriverIRQHandler --> ( s_saiRxIsr ) --> SAI_TransferTxHandleIRQ
+          --> SAI_WriteNonBlocking  --> （saiHandle[1][0].callback） --> tx_callback  -->  [ SAI_TransferAbortSend ]
+ 
+
+-------------------------------------------------------------------------------------------
+ 
+main()
+
+    while(1) 
+
+       for (uint32_t i = 0; i < 300000000; i++)    //100ms   
+           __NOP();          
+       
+
+       //播放内部音乐
+       xfer.data     = music;
+       xfer.dataSize = MUSIC_LEN;
+
+       //TCSR.8,10=1,1，设置txhandle参数部分3/3，把发送数据存入到txHandle的队列里，使能error中断，使能FIFI请求中断，开启发送
+       SAI_TransferSendNonBlocking(DEMO_SAI, &txHandle, &xfer);
+
+
+       while (isFinished != true) 
+
+            //------tx------play adcmusic------
+
+            if (emptyBlock < BUFFER_NUMBER)   //have data come in
+      
+                xfer.data     = Buffer + tx_index * BUFFER_SIZE;
+                xfer.dataSize = BUFFER_SIZE;
+
+                if (kStatus_Success == SAI_TransferSendNonBlocking(DEMO_SAI, &txHandle, &xfer))                
+                    tx_index++;
+               
+                if (tx_index == BUFFER_NUMBER)             
+                    tx_index = 0U;
+  
+
+        //-----tx-----play tone------
+
+        for (uint32_t i = 0; i < 1500000000; i++)      
+             __NOP();    
+
+         xfer.data     = (uint8_t *)music;       
+         xfer.dataSize = MUSIC_LEN;
+         SAI_TransferSendNonBlocking(DEMO_SAI, &txHandle, &xfer);
+         while (isFinished != true) ; 
+
+
+-----------------------------------------------------------
+
+//参考：TCSR  P1047
+//TCSR.8,10=1,1，设置txhandle参数部分3/3，把发送数据存入到txHandle的队列里，使能error中断，使能FIFI请求中断，开启发送
+//输入参数：SAI1 , txHandle ,xfer
+//输出：txHandle 
+SAI_TransferSendNonBlocking(*base,  *handle, *xfer)
+ 
+    assert( handle->channelNums <= 2  );
+
+    //检查下一个队列数组是否为空，如果有数据，则已排满  --easy
+    if ( handle->saiQueue[.queueUser].data != NULL )
+        return kStatus_SAI_QueueFull;
+ 
+
+    //分配下一个排队司机到新的卡车  （接收司机是同一批4个司机，但有两个编号，下一个排队的号和下一个卸货的号）
+    handle->saiQueue[.queueUser].data     = xfer->data;
+    handle->saiQueue[.queueUser].dataSize = xfer->dataSize;
+    handle->queueUser                            = (.queueUser + 1) % 4;     
+
+    handle->state = kSAI_Busy;
+
+    //TCSR.8,10=1,1，使能error中断，使能FIFI请求中断   (开启I2S的子中断)
+    SAI_TxEnableInterrupts(base, I2S_TCSR_FEIE_MASK | I2S_TCSR_FRIE_MASK);    
+            base->TCSR.8,10=1,1;   
+
+    //判断是否是同步模式，如果是同步模式先使能 receiver，使能Transmitter
+    SAI_TxEnable(base, true);
+
+         if(base->TCR2.31-30=01)    //判断是否为同步模式
+             base->RCSR.31=1;         //使能 receiver 
+         base->TCSR.31=1;             //使能 Transmitter
+
+        //TCSR.18=1， 清 FIFO error flag
+        SAI_TxClearStatusFlags(base, kSAI_FIFOErrorFlag);
+             TCSR.18=1;
+
+    
+ ---------------------------------
+
+//I2S中断入口函数，读取中断标志，跳转到中断服务子程序   --ok
+SAI1_DriverIRQHandler( )
+ 
+    //处理接收中断
+        (略)
+
+ 
+    //处理发送中断
+   // if ( SAI_TxGetEnabledInterruptStatus(  SAI1,  (I2S_TCSR_FRIE_MASK-bit8 | I2S_TCSR_FEIE_MASK-bit10) , 
+   //                                                                        (I2S_TCSR_FRF_MASK -bit16| I2S_TCSR_FEF_MASK-bit18))    )
+
+           if(  (tcsr.8==1 | tcsr.10==1) && (tcsr.16==1 | tcsr.18==1)  )  //fifo请求或err中断使能，并且有中断标志
+
+           //s_saiTxIsr(SAI1, s_saiHandle[1][0]);
+                 SAI_TransferTxHandleIRQ(SAI1, &txHandle);
+
+
+    SDK_ISR_EXIT_BARRIER;  //或为空函数
+ 
+
+------------------------
+
+//通过iis的tx中断发送数据  
+//输入参数：SAI1, txHandle
+//输出：TDR[0]每次发送4个字节，两个声道一次发送8个字节
+SAI_TransferTxHandleIRQ(  *base,  *handle) 
+
+    u8 *buffer   = handle->saiQueue[.queueDriver].data;  
+    dataSize = (handle->bitWidth / 8) *  .channelNums;      // 4*2, 每个声道4个字节，两个声道就是8字节    --easy
+
+    //如果发现错误状态标志，则先处理和清除错误标志 (错误处理，跳过)
+          (略)
+ 
+
+    //扫描到发送请求中断标志TCSR.16=1, 发送IIS数据
+    //if (IS_SAI_FLAG_SET(base->TCSR, 1<<16))   //如果有FIFO的Transmit 请求的中断状态标达
+      if (TCSR.16=1)   //如果是FIFO的Transmit 请求的中断状态标达
+
+        //取下面的最小值（最大不超过128字节--水位线），作为IIS发送数量   //if the data transmit is less than space
+        size = MIN(  handle->saiQueue[.queueDriver].dataSize ,   (32 - .watermark) * (4x2)  );  //watermark=16  (每次size要小于16x8=128)
+
+        //把buffer里面的size个数据，按每次4x2个字节的方式从IIS发出，ok
+        SAI_WriteNonBlocking(base, handle->channel, .channelMask, .endChannel, .bitWidth, buffer,  size);
+
+        //指针移到下一段要发送的数据
+        handle->saiQueue[.queueDriver].dataSize -= size;
+        handle->saiQueue[.queueDriver].data = ( buffer + size);
+
+ 
+    //如果发送完一个block(这里是1024)，则调用tx_callback函数  (这个block 和 下面的tx_callback函数都是自己定的，跟IIS寄存器无关)
+    if (handle->saiQueue[.queueDriver].dataSize == 0)
+
+        memset(  &handle->saiQueue[.queueDriver],  0,  all  );   //这里仅把指针清空为null （num也清0），（把rx卡车司机释放出来）
+        handle->queueDriver = ( .queueDriver + 1 ) % 4;    //SAI_XFER_QUEUE_SIZE, 简单,就是当排队数为0-3,超过4时回到0 (这里的4自定,跟寄存器无关)
+
+        //跳到数据处理中断
+        tx_callback(base, handle, kStatus_SAI_TxIdle, handle->userData );  
+
+
+    // 所有数据都发送完毕后， (只有司机没有卡车--可理解为mcu所有有数据的buf都已发光)
+    if (handle->saiQueue[.queueDriver].data == NULL)
+        SAI_TransferAbortSend(base, handle);
+
+ 
+--------------------------
+
+//把buffer里面的size个数据，按每次4x2个字节的方式从IIS发出  --ok
+//输入参数： SAI1, handle.channel,  .channelMask,  .endChannel,  .bitWidth,  buffer,   size
+//输出：TDR[0]每次发送4个字节，两个声道一次发送8个字节
+SAI_WriteNonBlocking(  I2S_Type     *base,
+                                     uint32_t      channel,
+                                     uint32_t      channelMask,
+                                     uint32_t      endChannel,
+                                     uint8_t        bitWidth,
+                                     uint8_t       *buffer,
+                                     uint32_t      size )
+
+    uint32_t i = 0, j = 0;
+    uint8_t m            = 0;
+    uint8_t bytesPerWord = bitWidth / 8;   //  32/8=4
+    uint32_t data        = 0;
+    uint32_t temp        = 0;
+
+    for (i = 0; i < size / bytesPerWord; i++)      //   size/4          (bitWidth=32bit)
+    
+        //各声道，交替发送iis数据，每个声道发送4个字节  （以后可考虑优化成一个U32）
+        for (j = channel; j <= endChannel; j++)
+        
+            //发送一个符合条件的声道数据 （如4个字节）
+            //if (IS_SAI_FLAG_SET((1 << j), channelMask))
+            if (channelMask.j==1)
+            
+                //把4个字节合并到一个u32里面，写入到TDR[channel]中    //以后可考虑优化，把buffer定义成U32的数组
+                for (m = 0; m < bytesPerWord; m++)  //每次发送一个通道的字节数，即4个字节
+                
+                    temp = *buffer;
+                    data |=temp << (8 * m);  //先加低字节，最低字节移位0即不移位
+                    buffer++;
+                
+                base->TDR[j] = data;
+                data         = 0;           
+
+
+---------------
+
+
+static void tx_callback(I2S_Type *base, sai_handle_t *handle, status_t status, void *userData)
+{
+    if (kStatus_SAI_TxError == status)
+    {
+        /* Handle the error. */
+    }
+    else
+    {
+        emptyBlock++;
+    }
+    
+    isFinished = true;
+}
+
+
+=======================IIS 输入读取流程========SAI1==========================
+
+rx flow：
+
+main --> SAI_TransferReceiveNonBlocking --> (xfer) -->  rxHandle  -->  SAI_RxEnableInterrupts  -->  SAI_RxEnable
+
+         (RX fiforequest irq)  --> --> SAI1_DriverIRQHandler --> ( rxHandle ) -->   SAI_TransferRxHandleIRQ 
+         --> SAI_ReadNonBlocking  --> （saiHandle[1][1]）  -->  rx_callback  -->  [ SAI_TransferAbortReceive ]
+
+
+注意点： s_saiRxIsr，SAI_TransferRxHandleIRQ, rx_callback
+
+
+------------------------------------------------------------------------------
+
+main()
+
+    while(1) 
+
+        //receive the iis data to buf
+        if (emptyBlock > 0)
+
+            xfer.data     = Buffer + rx_index * BUFFER_SIZE;
+            xfer.dataSize = BUFFER_SIZE;
+
+            //把新的数组，放到接收数据的地方; RCSR.8,10=1,1，使能error中断,使能FIFI请求中断，开启接收
+            if (kStatus_Success == SAI_TransferReceiveNonBlocking(DEMO_SAI, &rxHandle, &xfer))
+                rx_index++;
+           
+            if (rx_index == BUFFER_NUMBER)
+                rx_index = 0;      
+
+
+------------------------------------------------------
+
+参考：RCSR P1061 
+//把新的数组，放到接收数据的地方; RCSR.8,10=1,1，使能error中断,使能FIFI请求中断，开启接收
+输入参数：SAI1, rxHandle, xfer
+输出：   rxHandle  
+SAI_TransferReceiveNonBlocking( *base, *handle,  *xfer)
+ 
+    assert( handle != NULL );
+    assert( handle->channelNums <=  FSL_FEATURE_SAI_CHANNEL_COUNTn(base) );
+
+    //检查下一个队列数组是否为空，不为空，则表示队列已满  --easy  （相当于所有的接收司机userindex都坐上了卡车在排队等接收）
+    if (handle->saiQueue[handle->queueUser].data != NULL)
+        return kStatus_SAI_QueueFull;
+
+    //把新的数组，放到接收数据的地方
+    handle->saiQueue[.queueUser].data     = xfer->data;
+    handle->saiQueue[.queueUser].dataSize = xfer->dataSize;
+    handle->queueUser                            = (.queueUser + 1) %  4;
+
+    handle->state = kSAI_Busy;
+
+    //RCSR.10,8=11 使能error中断，使能FIFI请求中断   (开启I2S的子中断)
+    SAI_RxEnableInterrupts(base, I2S_TCSR_FEIE_MASK | I2S_TCSR_FRIE_MASK);  
+        RCSR.10,8=11;  
+
+     //判断是否是同步模式，如果是同步模式先使能 Transmitter，开启接收
+    //SAI_RxEnable(base, true);
+         if(base->RCR2.31-30=01)   //判断是否为同步模式
+             base->TCSR.31=1;    //开启发送
+         base->RCSR.31=1;       //开启接收
+
+
+----------------
+
+
+//I2S中断入口函数
+SAI1_DriverIRQHandler( )
+ 
+    //处理接收中断
+    //if (SAI_RxGetEnabledInterruptStatus(SAI1, (I2S_TCSR_FRIE_MASK | I2S_TCSR_FEIE_MASK),  
+    //                                                                (I2S_TCSR_FRF_MASK | I2S_TCSR_FEF_MASK)))
+          if(  (rcsr.8==1 | rcsr.10==1) && (rcsr.16==1 | rcsr.18==1)  )  //fifo请求或err中断使能，并且有中断标志
+
+              //s_saiRxIsr(SAI1, s_saiHandle[1][1]);
+                   SAI_TransferRxHandleIRQ(SAI1, &rxHandle);
+
+
+    //处理发送中断
+        (略)
+
+-------------------------------------------------------
+
+//通过iis的rx中断接收数据  
+//输入参数：SAI1, rxHandle
+//输出：RDR[0]  每次接收4个字节，两个声道一次接收8个字节
+SAI_TransferRxHandleIRQ(I2S_Type *base, sai_handle_t *handle)
+ 
+    flg_sai_rx=1;   
+
+    u8 *buffer   = handle->saiQueue[.queueDriver].data;  //--easy  （queueDriver实际就是queueUser的一个copy，用备份来进行数据处理，
+                                                                                                        queueUser备份后马上加1指向next）
+
+    dataSize = (handle->bitWidth / 8) * .channelNums;  // 32/8*2, 每次采样的字节数, 这里是32位，每个声道4个字节，两个声道就是8字节    --easy
+
+
+    //fifo 错误中断出来
+       （略）
+ 
+ 
+    //如果有接收请求中断标志RCSR.16=1, 接收IIS数据
+    if (IS_SAI_FLAG_SET(base->RCSR, I2S_RCSR_FRF_MASK))  //RCSR.16=1
+ 
+        //取下面的最小值（最大不超过128字节--水位线），作为IIS发送数量 
+        size = MIN((handle->saiQueue[.queueDriver].dataSize), .watermark * dataSize);
+
+        //Copy the data from sai buffer to FIFO  //把sai1过来128个数据，按每次4x2个字节的方式接收到数组(FIFO)
+        SAI_ReadNonBlocking(base, handle->channel, .channelMask, .endChannel, .bitWidth, buffer, size);
+
+        //数组里面指针后移size个数据，用数组后面的空间来接收数据
+        handle->saiQueue[.queueDriver].dataSize -= size;   //一个中断向前接收128个字节
+        handle->saiQueue[.queueDriver].data =buffer + size;
+
+
+    //当接收完一个block，则清字符指针为null（把rx卡车司机释放出来），把queueDriver++
+    if (handle->saiQueue[.queueDriver].dataSize == 0)
+ 
+        memset(&handle->saiQueue[.queueDriver], 0, all);    //这里仅把指针清空为null (num也清0)，没有对mcu中的fifo字符串做任何操作
+        handle->queueDriver = (.queueDriver + 1) % 4;
+
+        rx_callback(base, handle, kStatus_SAI_RxIdle, handle->userData);
+ 
+
+    //则表示已完成接收，关闭接收功能   (只有司机没有卡车--可理解为MCU没有卡车接收了/或userindex还没来得及分配卡车--easy)
+    /* If all data finished, just stop the transfer */
+    if (handle->saiQueue[.queueDriver].data == NULL)     //待理解 （为什么判断下一个数组指针，下一个数组指针在什么地方初始化的）
+                                                                                           //已理解, 在while循环里不断对下一数组指针进行分配(把4个数组指针都分配完)
+   
+        SAI_TransferAbortReceive(base, handle);
+ 
+ 
+-------------
+
+rx_callback(I2S_Type *base, sai_handle_t *handle, status_t status, void *userData)
+
+        emptyBlock--;
+
+
+
+=====================关闭==IIS  ==================================
+
+
+    //SAI_Deinit(DEMO_SAI);
+        SAI_TxEnable(base, false);
+        SAI_RxEnable(base, false);
+        CLOCK_DisableClock(s_saiClock[SAI_GetInstance(base)]);
+
+
+------------关闭-------tx-----------------
+
+SAI_TransferTxHandleIRQ(  *base,   *handle)
+
+         。。。
+
+         if (handle->saiQueue[handle->queueDriver].data == NULL)
+
+             //SAI_TransferAbortSend(base, handle);
+                  SAI_TxEnable(base, false);
+                  SAI_TxDisableInterrupts(base, I2S_TCSR_FEIE_MASK | I2S_TCSR_FRIE_MASK);
+
+
+-----
+
+SAI_TransferAbortSend(  *base,  *handle)
+ 
+    // 停止 Transmitter 设置
+    //SAI_TxEnable(base, false);
+         if  ( RCR2.31-30 != 01 )    // 如果rx不是同步
+             TCSR.31 = 0;               // 停止 Transmitter
+
+    //TCSR.8,10=0,0，不使能error中断，不使能FIFO请求中断
+    //SAI_TxDisableInterrupts(base, I2S_TCSR_FEIE_MASK | I2S_TCSR_FRIE_MASK);
+           base->TCSR.8,10=0,0;    
+
+    handle->state = kSAI_Idle;
+
+    //清空发送队列
+    memset( handle->saiQueue,  0,  sizeof(sai_transfer_t) * 4  );     //SAI_XFER_QUEUE_SIZE=4
+    handle->queueDriver = 0;
+    handle->queueUser   = 0;
+ 
+
+------------关闭-------rx-----------------
+
+
+SAI_TransferRxHandleIRQ(  *base,   *handle)
+        。。。
+
+    if (handle->saiQueue[handle->queueDriver].data == NULL)
+
+         //SAI_TransferAbortReceive(base, handle);
+             SAI_RxEnable(base, false);
+             SAI_RxDisableInterrupts(base, I2S_TCSR_FEIE_MASK | I2S_TCSR_FRIE_MASK);  
+
+---
+
+SAI_TransferAbortReceive( *base,  *handle )
+ 
+    //判断TX是否是同步模式， 如果tx不是同步模式，则关闭rx  （如tx为同步模式，则需要rx提供clk给它，则不能关闭rx）
+  //SAI_RxEnable(base, false);     
+        if(base->TCR2.31-30!=01)   //TX不为同步模式
+             base->RCSR.31=0;       //关闭接收
+
+    //RCSR.8,10=0,0，不使能error中断，不使能FIFO请求中断
+    SAI_RxDisableInterrupts(base, I2S_TCSR_FEIE_MASK | I2S_TCSR_FRIE_MASK);
+          base->RCSR.8,10=0,0;    
+
+    handle->state = kSAI_Idle;
+
+    //清除接收队列
+    memset(handle->saiQueue, 0, sizeof(sai_transfer_t) * 4);     //SAI_XFER_QUEUE_SIZE=4
+    handle->queueDriver = 0;
+    handle->queueUser   = 0;
+ 
+
+
+
+=====================I2S及中断的开启和关闭flow（以接收为例）=============================
+
+
+
+//---------------------------------开启接收及中断----------------------------------------
+
+SAI_TransferTxCreateHandle(*base,  *handle, callback,  *userData)
+ 
+    //使能iis的tx中断 (开启I2S的总中断)   //P40页
+    //EnableIRQ(s_saiTxIRQ[SAI_GetInstance(base)]);
+    //       EnableIRQ(SAI1_IRQn);
+    //              NVIC_EnableIRQ(56);                //P40页       
+                          NVIC->ISER[1] =1<< (24);   //使能tx中断 （也同时使能rx中断）(开启I2S的总中断)
+
+
+SAI_TransferReceiveNonBlocking( *base, *handle,  *xfer)
+ 
+    //RCSR.10,8=11 使能error中断，使能FIFI请求中断   (开启I2S的子中断)
+    SAI_RxEnableInterrupts(base, I2S_TCSR_FEIE_MASK | I2S_TCSR_FRIE_MASK);  
+        RCSR.10,8=11;  
+
+     //判断是否是同步模式，如果是同步模式先使能 Transmitter，开启接收
+    //SAI_RxEnable(base, true);
+         if(base->RCR2.31-30=01)   //判断是否为同步模式
+             base->TCSR.31=1;    //开启发送
+         base->RCSR.31=1;       //开启接收
+
+
+
+//---------------------------------关闭接收及中断----------------------------------------
+
+
+SAI_TransferAbortReceive( *base,  *handle )
+ 
+    //判断TX是否是同步模式， 如果tx不是同步模式，则关闭rx  （如tx为同步模式，则需要rx提供clk给它，则不能关闭rx）
+  //SAI_RxEnable(base, false);     
+        if(base->TCR2.31-30!=01)   //TX不为同步模式
+             base->RCSR.31=0;       //关闭接收
+
+    //RCSR.8,10=0,0，不使能error中断，不使能FIFO请求中断   (关闭I2S的子中断)
+    SAI_RxDisableInterrupts(base, I2S_TCSR_FEIE_MASK | I2S_TCSR_FRIE_MASK);
+          base->RCSR.8,10=0,0;    
+
+    handle->state = kSAI_Idle;
+
+    //清除接收队列
+    memset(handle->saiQueue, 0, sizeof(sai_transfer_t) * 4);     //SAI_XFER_QUEUE_SIZE=4
+    handle->queueDriver = 0;
+    handle->queueUser   = 0;
+ 
+
+
+
+
+
+
+
+

@@ -1,0 +1,91 @@
+﻿
+
+
+
+
+#define GPT_IRQ_ID             GPT2_IRQn   //31
+#define EXAMPLE_GPT            GPT2
+#define EXAMPLE_GPT_IRQHandler GPT2_IRQHandler
+
+
+
+typedef struct _gpt_init_config
+{
+    gpt_clock_source_t clockSource;  
+    uint32_t divider;             
+    bool enableFreeRun;           
+    bool enableRunInWait;         
+    bool enableRunInStop;         
+    bool enableRunInDoze;        
+    bool enableRunInDbg;        
+    bool enableMode;            
+                                    
+} gpt_config_t;
+
+
+typedef enum _gpt_clock_source
+{
+    kGPT_ClockSource_Off      = 0U, 
+    kGPT_ClockSource_Periph   = 1U,  
+    kGPT_ClockSource_HighFreq = 2U,  
+    kGPT_ClockSource_Ext      = 3U,  
+    kGPT_ClockSource_LowFreq  = 4U,  
+    kGPT_ClockSource_Osc      = 5U, 
+} gpt_clock_source_t;
+
+
+typedef enum _gpt_output_compare_channel
+{
+    kGPT_OutputCompare_Channel1 = 0 ,  
+    kGPT_OutputCompare_Channel2 = 1 ,  
+    kGPT_OutputCompare_Channel3 = 2 ,  
+} gpt_output_compare_channel_t;
+
+typedef enum _gpt_interrupt_enable
+{
+    kGPT_OutputCompare1InterruptEnable = GPT_IR_OF1IE_MASK,    // 1
+    kGPT_OutputCompare2InterruptEnable = GPT_IR_OF2IE_MASK,    // 2
+    kGPT_OutputCompare3InterruptEnable = GPT_IR_OF3IE_MASK,    // 4
+
+    kGPT_InputCapture1InterruptEnable  = GPT_IR_IF1IE_MASK,      // 0x08
+    kGPT_InputCapture2InterruptEnable  = GPT_IR_IF2IE_MASK,      // 0x10
+    kGPT_RollOverFlagInterruptEnable   = GPT_IR_ROVIE_MASK,      // 0x20
+} gpt_interrupt_enable_t;
+                    
+
+#define GPT_CR_EN_MASK                           (0x1U)
+#define GPT_CR_EN_SHIFT                          (0U)
+
+
+typedef enum _clock_name
+{
+    kCLOCK_CpuClk  = 0x0U, /*!< CPU clock */
+    kCLOCK_CoreClk = 0x1U, /*!< CORE clock */
+    kCLOCK_IpgClk  = 0x2U, /*!< IPG clock */
+    kCLOCK_PerClk  = 0x3U, /*!< PER clock */
+
+    kCLOCK_OscClk = 0x4U, /*!< OSC clock selected by PMU_LOWPWR_CTRL[OSC_SEL]. */
+    kCLOCK_RtcClk = 0x5U, /*!< RTC clock. (RTCCLK) */
+
+    ......
+
+} clock_name_t;
+
+                       
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

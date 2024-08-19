@@ -1,0 +1,134 @@
+
+
+=======================led翻转的流程================================
+
+flow：
+
+main --> BOARD_InitBootPins --> BOARD_InitPins --> CLOCK_EnableClock --> IOMUXC_SetPinMux --> IOMUXC_SetPinConfig
+
+main --> BOARD_InitBootPins --> GPIO_PinInit --> GPIO_PortToggle      
+
+
+
+-------------------------------------------------------------------------------------------
+
+main()
+
+    //BOARD_InitBootPins();
+    //     BOARD_InitPins();
+
+             //CLOCK_EnableClock(kCLOCK_Iomuxc);    //设置CCGR4.3-2=3
+                  CLOCK_ControlGate(kCLOCK_Iomuxc, 3);    //设置引脚复用的时钟模式为常开（进入WAIT时也开）
+
+             //设置IO口P11为普通IO口，不设置输入功能
+             IOMUXC_SetPinMux    ( IOMUXC_GPIO_11_GPIOMUX_IO11,   0U);  
+
+
+             //设置P11为下拉，100MHz，驱动强度R0/4, 开工速度为慢速  
+             IOMUXC_SetPinConfig ( IOMUXC_GPIO_11_GPIOMUX_IO11,   0x70A0U); 
+
+
+    //设置gpio1的时钟为常开，设置P1.11为输出，初始低电平，暂时先屏蔽P2.5的中断，
+      不设置下降沿还是低电平触发（不需要设置，默认应是低电平）
+    //GPIO_PinInit(EXAMPLE_LED_GPIO, EXAMPLE_LED_GPIO_PIN, &led_config);
+        CLOCK_ControlGate( kCLOCK_Gpio1, 3 );       //设置CCGR1.27-26=11， 设置GPIO1的时钟模式为常开（进入WAIT时也开） 
+        GPIO1->IMR &= ~(1 << 11);                          //IMR.11=0, 不使能P11中断
+        GPIO1->DR_CLEAR = (1 <<11);                       //DR_CLEAR.11=1 , 设置P1.11的电平为低电平
+        GPIO1->GDIR |= (1 << 11);                             //GDIR.11=1, 设置P1.11为输出  
+        GPIO1->EDGE_SEL.11=0;         //屏蔽P1.11的中断触发（上升沿，高电平等）
+        GPIO1->ICR1                          //因没有需要中断，不作任何操作（=上升沿触发等）
+
+
+    while(1)
+
+        SDK_DelayAtLeastUs(50000, SDK_DEVICE_MAXIMUM_CPU_CLOCK_FREQUENCY);        //延时50ms
+        GPIO_PortToggle(EXAMPLE_LED_GPIO, 1u << EXAMPLE_LED_GPIO_PIN);                    //翻转了的（P11）的电平
+
+
+-------------
+
+//参数： GPIO1 ， 1<<11
+ GPIO_PortToggle( *base,  mask)
+      base->DR_TOGGLE = mask;
+
+0x401F8090U, 0x5U, 0, 0, 0x401F8140U
+-------------------------
+
+//参考rt1010RM的寄存器P303：IOMUXC_SW_MUX_CTL_PAD_GPIO_11
+//设置IO口P1.11为普通IO口，不设置输入功能
+//参数： 0x401F8090, 0x5, 0, 0, 0x401F8140,       0          // 0x401F8090  -- 是指P11的MUX模式寄存器
+IOMUXC_SetPinMux( muxRegister, muxMode,  inputRegister,        inputDaisy,  configRegister,  inputOnfield)
+ 
+    //muxRegister = IOMUXC_SW_MUX_CTL_PAD_MUX_MODE(muxMode) | IOMUXC_SW_MUX_CTL_PAD_SION(inputOnfield);
+       muxRegister.2-0=muxMode=5 | muxRegister.4=inputOnfield=0 ;    //bit2-0=101,  做普通IO口; bit4=0, 关闭输入
+
+    if (inputRegister != 0UL)   //这里是0，固跳过
+        *((volatile uint32_t *)inputRegister) = inputDaisy;
+ 
+
+----------------
+
+//参考rt1020的寄存器P374：IOMAX_SW_PAD_CTL_PAD_GPIO_EMC_11 
+//设置P1.11为100k下拉，不开opendrain，100MHz，驱动强度R0/4, 开工速度为慢速
+//参数：0x401F8090U, 0x5U, 0,      0, 0x401F8140U,        0x70A0U    //0x401F8140U是P1.11的config寄存器
+IOMUXC_SetPinConfig( muxRegister, muxMode,  inputRegister,    inputDaisy,  configRegister,  configValue)
+ 
+     configRegister = configValue=0x70A0;      //bit16=0, 不使能高阻 
+                                                                     //bit15-14=01, 100k下拉；bit13=1待理解，bit12=1待理解；
+                                                                     //bit11=0，不开opendrain; bit7-6=10, 速度100MHz；
+                                                                     //bit5-3=100, 驱动强度=R0/4待理解；BIT0=0，切换速度为慢速。
+ 
+ ------------------------
+
+//参考：rt1010的寄存器MAP： GPIO1,2,5  (0x401B8000u等)   P463
+//设置gpio1的时钟为常开，设置P1.11为输出，初始低电平，暂时先屏蔽P2.5的中断，不设置下降沿还是低电平触发（不需要设置，默认应是低电平）
+//参数GPIO1 (0x401B8000u) ，11 , Config ( 1，0, 0)  //方向，输出电平，是否中断
+GPIO_PinInit(  *base,   pin,   *Config) 
+
+     instance = GPIO_GetInstance(GPIO1);  //根据IO口的地址，取得IO口的编号，即GPIO1后面的“1”
+
+    //CLOCK_EnableClock(s_gpioClock[1]);    
+        CLOCK_ControlGate( kCLOCK_Gpio1, 3 );      //设置CCGR1.27-26=11， 设置GPIO1的时钟模式为常开（进入WAIT时也开）
+ 
+    GPIO1->IMR &= ~(1 << 11);      //IMR.11=0, 不使能P1.11中断
+ 
+    //GPIO_PinWrite(base, pin, Config->outputLogic);   
+        GPIO1->DR_CLEAR = (1 <<11);     //DR_CLEAR.11=1 , 设置P1.11的电平为低电平
+   GPIO1->GDIR |= (1 << 11);                                 //GDIR.11=1, 设置P1.11为输出  
+ 
+
+    //GPIO_SetPinInterruptConfig(GPIO1, 11, 0);      //设置中断模式为0，不打开中断
+    //     GPIO_PinSetInterruptConfig(GPIO1, 11, 0);
+              GPIO1->EDGE_SEL.11=0;  //屏蔽P1.11的中断触发（上升沿，高电平等）
+              GPIO1->ICR1                   //因没有需要中断，不作任何操作（设置上升沿触发等）
+
+
+
+
+-----
+
+//设置P11的IO口时钟
+CLOCK_ControlGate( name,   value)
+
+    uint32_t index = ((uint32_t)name) >> 8U;
+    uint32_t shift = ((uint32_t)name) & 0x1FU;
+    volatile uint32_t *reg;  
+
+    assert(index <= 6UL);  
+
+    reg = (volatile uint32_t *)(&(((volatile uint32_t *)&CCM->CCGR0)[index]));   
+    SDK_ATOMIC_LOCAL_CLEAR_AND_SET(reg, (3UL << shift), (((uint32_t)value) << shift));   
+
+
+
+
+
+
+
+
+
+
+
+
+
+

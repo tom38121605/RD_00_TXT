@@ -1,0 +1,193 @@
+﻿
+#define BOARD_FLEXIO_BASE  FLEXIO1
+#define FLEXIO_UART_TX_PIN 21U
+#define FLEXIO_UART_RX_PIN 22U
+
+flexio_uart_handle_t      g_uartHandle;
+FLEXIO_UART_Type       uartDev;   
+
+FLEXIO_Type *const s_flexioBases[] = FLEXIO_BASE_PTRS;
+
+#define FLEXIO_BASE_PTRS                         {  0 , FLEXIO1 }
+
+#define FLEXIO_IRQS                              { NotAvail_IRQn, FLEXIO1_IRQn }
+
+---
+
+#define ECHO_BUFFER_LENGTH 8
+
+uint8_t g_txBuffer[ECHO_BUFFER_LENGTH] = {0};
+uint8_t g_rxBuffer[ECHO_BUFFER_LENGTH] = {0};
+volatile bool rxBufferEmpty            = true;
+volatile bool txBufferFull             = false;
+volatile bool txOnGoing                = false;
+volatile bool rxOnGoing                = false;
+=========================================
+
+
+struct _flexio_uart_handle
+{
+    const uint8_t *volatile       txData; 
+    volatile size_t                    txDataSize;     
+    uint8_t *volatile                 rxData;       
+    volatile size_t                    rxDataSize;    
+    size_t                                txDataSizeAll;        
+    size_t                                rxDataSizeAll;         
+
+    uint8_t                           *rxRingBuffer;               
+    size_t                             rxRingBufferSize;           
+    volatile uint16_t              rxRingBufferHead;  
+    volatile uint16_t              rxRingBufferTail;  
+
+    flexio_uart_transfer_callback_t        callback;  
+    void                                              *userData;                      
+
+    volatile uint8_t                           txState;  
+    volatile uint8_t                           rxState; 
+
+};
+
+
+typedef struct _flexio_uart_handle        flexio_uart_handle_t;
+
+
+=========================================
+
+typedef struct _flexio_uart_config
+{
+    bool enableUart;                              
+    bool enableInDoze;                               
+    bool enableInDebug;                            
+    bool enableFastAccess;                           
+                                                    
+    uint32_t baudRate_Bps;                        
+    flexio_uart_bit_count_per_char_t bitCountPerChar; / 
+} flexio_uart_config_t;
+
+
+typedef struct _flexio_uart_type
+{
+    FLEXIO_Type *flexioBase; 
+    uint8_t TxPinIndex;      
+    uint8_t RxPinIndex;      
+    uint8_t shifterIndex[2];  
+    uint8_t timerIndex[2];   
+} FLEXIO_UART_Type;
+
+
+－－－－－－－－－－－－－－－－－－－－－－
+
+
+typedef struct _flexio_timer_config
+{ 
+    uint32_t                           triggerSelect;                        
+    flexio_timer_trigger_polarity_t    triggerPolarity;  
+    flexio_timer_trigger_source_t      triggerSource;      
+     
+    flexio_pin_config_t                 pinConfig;      
+    uint32_t                            pinSelect;               
+    flexio_pin_polarity_t               pinPolarity; 
+ 
+    flexio_timer_mode_t                 timerMode;                
+    flexio_timer_output_t               timerOutput;              
+                                                 
+    flexio_timer_decrement_source_t      timerDecrement; 
+                                                    
+    flexio_timer_reset_condition_t         timerReset;      
+    flexio_timer_disable_condition_t      timerDisable;  
+    flexio_timer_enable_condition_t       timerEnable;    
+    flexio_timer_stop_bit_condition_t     timerStop;    
+    flexio_timer_start_bit_condition_t     timerStart;   
+    uint32_t                                           timerCompare;                   
+       
+} flexio_timer_config_t;
+
+
+typedef struct _flexio_shifter_config
+{
+ 
+    uint32_t                           timerSelect;                      
+    flexio_shifter_timer_polarity_t    timerPolarity; 
+ 
+    flexio_pin_config_t                 pinConfig;     
+    uint32_t                            pinSelect;                 
+    flexio_pin_polarity_t               pinPolarity; 
+    
+    flexio_shifter_mode_t               shifterMode;  
+ 
+    uint32_t                            parallelWidth;                   
+                                         
+    flexio_shifter_input_source_t       inputSource; 
+    flexio_shifter_stop_bit_t           shifterStop;      
+    flexio_shifter_start_bit_t          shifterStart;   
+} flexio_shifter_config_t;
+
+
+－－－－－－－
+
+typedef enum _flexio_shifter_timer_polarity
+{
+    kFLEXIO_ShifterTimerPolarityOnPositive = 0x0U,  
+    kFLEXIO_ShifterTimerPolarityOnNegitive = 0x1U,  
+} flexio_shifter_timer_polarity_t;
+
+typedef enum _flexio_pin_config
+{
+    kFLEXIO_PinConfigOutputDisabled         = 0x0U,  
+    kFLEXIO_PinConfigOpenDrainOrBidirection = 0x1U,  
+    kFLEXIO_PinConfigBidirectionOutputData  = 0x2U,  
+    kFLEXIO_PinConfigOutput                 = 0x3U, 
+} flexio_pin_config_t;
+
+
+
+
+－－－－－－－－－－－－－－
+
+
+#define FLEXIO_TIMER_TRIGGER_SEL_PININPUT(x)       x << 1 
+#define FLEXIO_TIMER_TRIGGER_SEL_SHIFTnSTAT(x)     ( x << 2) | 0x1 
+#define FLEXIO_TIMER_TRIGGER_SEL_TIMn(x)           (x << 2) | 0x3 
+
+
+---
+
+enum _flexio_uart_status_flags
+{
+    kFLEXIO_UART_TxDataRegEmptyFlag = 0x1U, /*!< Transmit buffer empty flag. */
+    kFLEXIO_UART_RxDataRegFullFlag  = 0x2U, /*!< Receive buffer full flag. */
+    kFLEXIO_UART_RxOverRunFlag      = 0x4U, /*!< Receive buffer over run flag. */
+};
+
+
+
+
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

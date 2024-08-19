@@ -1,0 +1,466 @@
+﻿
+
+SMonitor src:
+1. Wake up by the UART command of the normal BT playing music.
+
+
+==========================================================
+
+/*
+ * AUDIO PLL setting: Frequency = Fref * (DIV_SELECT + NUM / DENOM)
+ *                              = 24 * (32 + 77/100)
+ *                              = 786.48 MHz
+ */
+
+const clock_audio_pll_config_t audioPllConfig = {
+    .loopDivider = 32,  /* PLL loop divider. Valid range for DIV_SELECT divider value: 27~54. */
+    .postDivider = 1,   /* Divider after the PLL, should only be 1, 2, 4, 8, 16. */
+    .numerator   = 77,  /* 30 bit numerator of fractional loop divider. */
+    .denominator = 100, /* 30 bit denominator of fractional loop divider */
+};
+
+================================================================
+ 
+ #define MAKE_STATUS(group, code) ((((group)*100L) + (code)))
+
+      //COMBIN
+      //SAI1->TCR4 &= ~I2S_TCR4_FCOMB_MASK;
+      //SAI1->TCR4 |= I2S_TCR4_FCOMB(3);  
+
+
+
+
+enum
+{
+    kStatus_Success         = 0
+    kStatus_Fail            = 1
+    kStatus_ReadOnly        = 2
+    kStatus_OutOfRange      = 3
+    kStatus_InvalidArgument = 4
+    kStatus_Timeout         = 5
+    kStatus_NoTransferInProgress =6
+    kStatus_Busy = 7
+    kStatus_NoData =8
+};
+
+
+
+*********************************channelNums***********TDRn and RDRn *********tx_data01************************************
+
+TCR3.17-16=01  , 使能信道0,信道1
+
+/* @brief Receive/transmit channel number (register bit fields TCR3[TCE], RCR3[RCE], registers TDRn and RDRn). */
+#define FSL_FEATURE_SAI_CHANNEL_COUNTn(x) \
+    (((x) == SAI1) ? (2) : \
+    (((x) == SAI3) ? (1) : (-1)))
+
+
+    assert(config->channelNums <= FSL_FEATURE_SAI_CHANNEL_COUNTn(base));
+
+------
+
+
+
+typedef struct _sai_transceiver
+{
+    sai_serial_data_t serialData;  
+    sai_frame_sync_t frameSync;   
+    sai_bit_clock_t bitClock;      
+ 
+    sai_fifo_t fifo;  
+ 
+    sai_master_slave_t masterSlave;  
+
+    sai_sync_mode_t syncMode; 
+
+    uint8_t startChannel;  
+    uint8_t channelMask;  
+    uint8_t endChannel;    
+    uint8_t channelNums;   
+
+} sai_transceiver_t;
+
+
+void SAI_TransferTxSetConfig(I2S_Type *base, sai_handle_t *handle, sai_transceiver_t *config)
+{
+    assert(handle != NULL);
+    assert(config != NULL);
+    assert(config->channelNums <= (uint32_t)FSL_FEATURE_SAI_CHANNEL_COUNTn(base));
+
+    handle->bitWidth = config->frameSync.frameSyncWidth;
+#if defined(FSL_FEATURE_SAI_FIFO_COUNT) && (FSL_FEATURE_SAI_FIFO_COUNT > 1)
+    handle->watermark = config->fifo.fifoWatermark;
+#endif
+
+    /* transmitter configurations */
+    SAI_TxSetConfig(base, config);
+
+    handle->channel = config->startChannel;
+    /* used for multi channel */
+    handle->channelMask = config->channelMask;
+    handle->channelNums = config->channelNums;
+    handle->endChannel  = config->endChannel;
+}
+
+*********************************channelNums**************end******************************************
+
+
+    kCLOCK_Sai1    = (5U << 8U) | CCM_CCGR5_CG9_SHIFT,  /*!< CCGR5, CG9   */
+    kCLOCK_Sai3    = (5U << 8U) | CCM_CCGR5_CG11_SHIFT, /*!< CCGR5, CG11  */
+
+typedef struct {
+  __I  uint32_t VERID;                     
+  __I  uint32_t PARAM;                       
+  __IO uint32_t TCSR;                       
+  __IO uint32_t TCR1;                               
+  __IO uint32_t TCR2;               
+  __IO uint32_t TCR3;                    
+  __IO uint32_t TCR4;                       
+  __IO uint32_t TCR5;                     
+  __O  uint32_t TDR[2];                       
+       uint8_t RESERVED_0[24];
+  __I  uint32_t TFR[2];                       
+       uint8_t RESERVED_1[24];
+  __IO uint32_t TMR;                         
+       uint8_t RESERVED_2[36];
+  __IO uint32_t RCSR;                        
+  __IO uint32_t RCR1;                  
+  __IO uint32_t RCR2;                      
+  __IO uint32_t RCR3;                        
+  __IO uint32_t RCR4;                        
+  __IO uint32_t RCR5;                         
+  __I  uint32_t RDR[2];                     
+       uint8_t RESERVED_3[24];
+  __I  uint32_t RFR[2];                         
+       uint8_t RESERVED_4[24];
+  __IO uint32_t RMR;                  
+} I2S_Type;
+
+------
+
+typedef struct _sai_transfer
+{
+    uint8_t *data;   
+    size_t dataSize;  
+} sai_transfer_t;
+
+
+#define SAI_XFER_QUEUE_SIZE (4U)
+struct _sai_handle
+{
+    I2S_Type *base;  
+
+    uint32_t state;                   
+    sai_transfer_callback_t    callback;  
+    void *userData;                                 //这个userData在当前例子中似乎没有用到过      
+    uint8_t bitWidth;             
+ 
+    uint8_t channel;      
+    uint8_t channelMask;  
+    uint8_t endChannel;  
+    uint8_t channelNums;  
+
+    sai_transfer_t saiQueue[4];    //SAI_XFER_QUEUE_SIZE
+    size_t transferSize[4];            //SAI_XFER_QUEUE_SIZE
+    volatile uint8_t queueUser;               
+    volatile uint8_t queueDriver;              
+ 
+    uint8_t watermark;        //水位线 （对iis每次发送数据的限制）
+};
+typedef   struct _sai_handle    sai_handle_t;
+static sai_handle_t *s_saiHandle[2][2];
+
+static I2S_Type *const s_saiBases[] = I2S_BASE_PTRS;
+#define I2S_BASE_PTRS                            { (I2S_Type *)0u, SAI1, (I2S_Type *)0u, SAI3 }
+
+
+---------------------------------------
+ 
+#define IOMUXC_GPIO_03_SAI1_RX_DATA00     0x401F80B0U, 0x0U, 0, 0, 0x401F8160U
+#define IOMUXC_GPIO_04_SAI1_TX_DATA00     0x401F80ACU, 0x0U, 0, 0, 0x401F815CU
+
+#define IOMUXC_GPIO_08_SAI1_MCLK 0x401F809CU, 0x0U, 0, 0, 0x401F814CU
+ 
+
+#define DEMO_SAI                            SAI1
+#define SAI1                                     ((I2S_Type *)SAI1_BASE)
+#define SAI1_BASE                            (0x401E0000u)
+
+#define I2S_TCSR_FRIE_MASK                       (0x100U)
+#define I2S_TCSR_FRIE_SHIFT                       (8U)
+
+sai_handle_t   txHandle = {0},      rxHandle = {0};
+
+
+ sai_handle_t      *s_saiHandle[2][2];
+
+-----------
+
+typedef   void (*sai_tx_isr_t)  (I2S_Type *base, sai_handle_t *saiHandle);
+
+static sai_tx_isr_t s_saiTxIsr;
+
+---
+
+#define I2S_TX_IRQS                              { NotAvail_IRQn, SAI1_IRQn, NotAvail_IRQn, SAI3_TX_IRQn }
+
+static const IRQn_Type s_saiTxIRQ[] = I2S_TX_IRQS;
+
+
+typedef struct _sai_transfer
+{
+    uint8_t *data;            /*!< Data start address to transfer. */
+    size_t dataSize;         /*!< Transfer size. */
+} sai_transfer_t;
+
+uint8_t Buffer[4 * 1024];
+
+-------------
+
+    sai_transfer_t xfer;
+
+#define BUFFER_SIZE   (1024U)
+#define BUFFER_NUMBER (4U)
+
+
+---
+
+struct _sai_transceiver
+{
+    sai_serial_data_t      serialData;      /*!< serial data configurations */
+    sai_frame_sync_t    frameSync;     /*!< ws configurations */
+    sai_bit_clock_t        bitClock;         /*!< bit clock configurations */
+ 
+    sai_fifo_t                  fifo;                 /*!< fifo configurations */ 
+    sai_master_slave_t    masterSlave;        /*!< transceiver is master or slave */
+    sai_sync_mode_t      syncMode;           /*!< transceiver sync mode */
+
+    uint8_t                    startChannel;        /*!< Transfer start channel */
+    uint8_t                    channelMask;       /*!< enabled channel mask value, reference _sai_channel_mask */
+    uint8_t                    endChannel;        /*!< end channel number */
+    uint8_t                    channelNums;      /*!< Total enabled channel numbers */
+
+} sai_transceiver_t;
+
+struct _sai_serial_data
+{ 
+    sai_data_pin_state_t dataMode;    /*!< sai data pin state when slots masked or channel disabled */ 
+
+    sai_data_order_t dataOrder;        /*!< configure whether the LSB or MSB is transmitted first */
+    uint8_t dataWord0Length;          /*!< configure the number of bits in the first word in each frame */
+    uint8_t dataWordNLength;        /*!< configure the number of bits in the each word in each frame, except the first word */
+    uint8_t dataWordLength;          /*!< used to record the data length for dma transfer */
+    uint8_t dataFirstBitShifted;        /*!< Configure the bit index for the first bit transmitted for each word in the frame */
+    uint8_t dataWordNum;              /*!< configure the number of words in each frame */
+    uint32_t dataMaskedWord;      /*!< configure whether the transmit word is masked */
+} sai_serial_data_t;
+
+struct _sai_frame_sync
+{
+    uint8_t frameSyncWidth;  
+    bool frameSyncEarly;     
+    bool frameSyncGenerateOnDemand;   /*!< internal frame sync is generated when FIFO waring flag is clear */
+    sai_clock_polarity_t frameSyncPolarity;   /*!< frame sync polarity */
+} sai_frame_sync_t;
+
+struct _sai_bit_clock
+{
+    bool bclkSrcSwap;        /*!< bit clock source swap */
+    bool bclkInputDelay;    /*!< bit clock actually used by the transmitter is delayed by the pad output delay,
+                                           this has effect of decreasing the data input setup time, but increasing the data output valid
+                                           time .*/
+    sai_clock_polarity_t bclkPolarity;    /*!< bit clock polarity */
+    sai_bclk_source_t bclkSource;        /*!< bit Clock source */
+} sai_bit_clock_t;
+
+typedef enum _sai_master_slave
+{
+    kSAI_Master                      = 0x0U,  
+    kSAI_Slave                       = 0x1U,  
+    kSAI_Bclk_Master_FrameSync_Slave = 0x2U,  
+    kSAI_Bclk_Slave_FrameSync_Master = 0x3U,  
+} sai_master_slave_t;
+
+typedef struct _sai_fifo
+{ 
+    bool fifoContinueOneError;            /*!< fifo continues when error occur */ 
+    sai_fifo_combine_t fifoCombine;    /*!< fifo combine mode */ 
+    sai_fifo_packing_t fifoPacking;       /*!< fifo packing mode */ 
+    uint8_t fifoWatermark;                 /*!< fifo watermark */ 
+} sai_fifo_t;
+ 
+
+typedef enum _sai_sync_mode
+{
+    kSAI_ModeAsync = 0x0,     //异步
+    kSAI_ModeSync,                   //同步 
+} sai_sync_mode_t;
+
+ 
+
+
+----------
+
+#define DEMO_SAI              SAI1
+#define DEMO_SAI_CHANNEL      (0)
+#define DEMO_SAI_IRQ          SAI1_IRQn
+#define DEMO_SAITxIRQHandler  SAI1_IRQHandler
+#define DEMO_SAI_TX_SYNC_MODE kSAI_ModeAsync
+#define DEMO_SAI_RX_SYNC_MODE kSAI_ModeSync
+#define DEMO_SAI_MCLK_OUTPUT  true
+#define DEMO_SAI_MASTER_SLAVE kSAI_Master
+
+#define DEMO_AUDIO_DATA_CHANNEL (2U)
+#define DEMO_AUDIO_BIT_WIDTH    kSAI_WordWidth16bits
+#define DEMO_AUDIO_SAMPLE_RATE  (kSAI_SampleRate16KHz)
+#define DEMO_AUDIO_MASTER_CLOCK  DEMO_SAI_CLK_FREQ
+
+typedef enum _sai_mono_stereo
+{
+    kSAI_Stereo = 0x0U,  
+    kSAI_MonoRight,    
+    kSAI_MonoLeft       
+} sai_mono_stereo_t;
+
+typedef enum _sai_word_width
+{
+    kSAI_WordWidth8bits  = 8U,  
+    kSAI_WordWidth16bits = 16U,  
+    kSAI_WordWidth24bits = 24U,  
+    kSAI_WordWidth32bits = 32U   
+} sai_word_width_t;
+
+typedef enum _sai_clock_polarity
+{
+    kSAI_PolarityActiveHigh  = 0x0U,            // Drive outputs on rising edge  
+    kSAI_PolarityActiveLow   = 0x1U,            // Drive outputs on falling edge  
+    kSAI_SampleOnFallingEdge = 0x0U,       // Sample inputs on falling edge  
+    kSAI_SampleOnRisingEdge  = 0x1U,      // Sample inputs on rising edge 
+} sai_clock_polarity_t;
+
+typedef enum _sai_data_order
+{
+    kSAI_DataLSB = 0x0U,    //LSB bit transferred first /
+    kSAI_DataMSB               //MSB bit transferred first /
+} sai_data_order_t;
+
+typedef enum _sai_data_pin_state
+{
+    kSAI_DataPinStateTriState=0,          //被屏蔽或信道被禁用时, 引脚为三态  
+    kSAI_DataPinStateOutputZero=1,    //被屏蔽或信道被禁用时, 引脚为低电平  
+} sai_data_pin_state_t;
+
+
+#define IS_SAI_FLAG_SET(reg, flag)          (   (reg) & ( flag)   ) != 0 
+#define I2S_TCR3_TCE(x)                         (  x << I2S_TCR3_TCE_SHIFT)   & I2S_TCR3_TCE_MASK    
+
+#define I2S_TCR2_SYNC(x)                         (  x << I2S_TCR2_SYNC_SHIFT  )  & I2S_TCR2_SYNC_MASK
+
+
+typedef enum _sai_bclk_source
+{
+    kSAI_BclkSourceBusclk = 0x0U,                            /*!< Bit clock using bus clock */
+
+    /* General device bit source definition */
+    kSAI_BclkSourceMclkOption1 = 0x1U,                   /*!< Bit clock MCLK option 1 */
+    kSAI_BclkSourceMclkOption2 = 0x2U,                 /*!< Bit clock MCLK option2  */
+    kSAI_BclkSourceMclkOption3 = 0x3U,                        /*!< Bit clock MCLK option3 */
+
+    /* Kinetis device bit clock source definition */
+    kSAI_BclkSourceMclkDiv   = 0x1U,                 /*!< Bit clock using master clock divider */
+    kSAI_BclkSourceOtherSai0 = 0x2U,                 /*!< Bit clock from other SAI device  */
+    kSAI_BclkSourceOtherSai1 = 0x3U                  /*!< Bit clock from other SAI device */
+} sai_bclk_source_t;
+
+
+typedef enum _sai_fifo_combine
+{
+    kSAI_FifoCombineDisabled = 0U,                             /*!< sai fifo combine mode disabled */
+    kSAI_FifoCombineModeEnabledOnRead,                 /*!< sai fifo combine mode enabled on FIFO reads */
+    kSAI_FifoCombineModeEnabledOnWrite,                /*!< sai fifo combine mode enabled on FIFO write */
+    kSAI_FifoCombineModeEnabledOnReadWrite,         /*!< sai fifo combined mode enabled on FIFO read/writes */
+} sai_fifo_combine_t;
+
+
+typedef enum _sai_sample_rate
+{
+    kSAI_SampleRate8KHz    = 8000U,   /*!< Sample rate 8000 Hz */
+    kSAI_SampleRate11025Hz = 11025U,  /*!< Sample rate 11025 Hz */
+    kSAI_SampleRate12KHz   = 12000U,  /*!< Sample rate 12000 Hz */
+    kSAI_SampleRate16KHz   = 16000U,  /*!< Sample rate 16000 Hz */
+    kSAI_SampleRate22050Hz = 22050U,  /*!< Sample rate 22050 Hz */
+    kSAI_SampleRate24KHz   = 24000U,  /*!< Sample rate 24000 Hz */
+    kSAI_SampleRate32KHz   = 32000U,  /*!< Sample rate 32000 Hz */
+    kSAI_SampleRate44100Hz = 44100U,  /*!< Sample rate 44100 Hz */
+    kSAI_SampleRate48KHz   = 48000U,  /*!< Sample rate 48000 Hz */
+    kSAI_SampleRate96KHz   = 96000U,  /*!< Sample rate 96000 Hz */
+    kSAI_SampleRate192KHz  = 192000U, /*!< Sample rate 192000 Hz */
+    kSAI_SampleRate384KHz  = 384000U, /*!< Sample rate 384000 Hz */
+} sai_sample_rate_t;
+
+typedef enum _sai_word_width
+{
+    kSAI_WordWidth8bits  = 8U,  /*!< Audio data width 8 bits */
+    kSAI_WordWidth16bits = 16U, /*!< Audio data width 16 bits */
+    kSAI_WordWidth24bits = 24U, /*!< Audio data width 24 bits */
+    kSAI_WordWidth32bits = 32U  /*!< Audio data width 32 bits */
+} sai_word_width_t;
+
+----------
+
+kCLOCK_AudioPllClk = 0x11U,   // Audio PLLCLK 
+
+#define DEMO_AUDIO_MASTER_CLOCK DEMO_SAI_CLK_FREQ
+
+#define DEMO_SAI_CLK_FREQ                                                        
+    (CLOCK_GetFreq(kCLOCK_AudioPllClk) / (DEMO_SAI1_CLOCK_SOURCE_DIVIDER + 1U) / 
+     (DEMO_SAI1_CLOCK_SOURCE_PRE_DIVIDER + 1U))
+
+#define DEMO_SAI_CLK_FREQ     (   CLOCK_GetFreq(11) /  (63 + 1) /  (0 + 1)   )
+
+#define DEMO_AUDIO_BIT_WIDTH    kSAI_WordWidth16bits          //16
+#define DEMO_AUDIO_SAMPLE_RATE  (kSAI_SampleRate16KHz)    //16000
+
+
+enum
+{
+    kSAI_WordStartFlag = I2S_TCSR_WSF_MASK,   // 
+    kSAI_SyncErrorFlag = I2S_TCSR_SEF_MASK,      // 
+    kSAI_FIFOErrorFlag = I2S_TCSR_FEF_MASK,      //18
+ 
+    kSAI_FIFORequestFlag = I2S_TCSR_FRF_MASK,       // 
+ 
+    kSAI_FIFOWarningFlag = I2S_TCSR_FWF_MASK,      // 
+};
+
+#define FSL_FEATURE_SAI_FIFO_COUNT (32)
+
+
+
+
+=======================参考=============================
+
+
+
+//typedef struct _sai_transfer_format    //--seems nouse
+{
+    uint32_t sampleRate_Hz;   
+    uint32_t bitWidth;      
+    sai_mono_stereo_t stereo;  
+ 
+    uint8_t watermark;   
+ 
+    uint8_t channel;     
+    uint8_t channelMask;  
+    uint8_t endChannel;   
+    uint8_t channelNums; 
+
+    sai_protocol_t protocol;  
+    bool isFrameSyncCompact; 
+
+} sai_transfer_format_t;
+
+
+
+
+

@@ -1,0 +1,267 @@
+
+=======================================================
+
+flow：
+
+main --> BOARD_InitBootPins --> BOARD_InitPins --> CLOCK_EnableClock --> IOMUXC_SetPinMux --> IOMUXC_SetPinConfig
+
+main --> BOARD_InitBootPins --> ADC_GetDefaultConfig  -->  ADC_Init  -->  ADC_EnableHardwareTrigger  --> ADC_DoAutoCalibration
+        -->  ADC_SetChannelConfig  --> ADC_GetChannelStatusFlags   -->  ADC_GetChannelConversionValue         
+
+-------------------------------------------------------------------------------------------
+
+main()
+
+    //BOARD_InitBootPins();
+    //     BOARD_InitPins();
+
+             //CLOCK_EnableClock(kCLOCK_Iomuxc);            //设置CCGR4.3-2=3
+                   CLOCK_ControlGate(kCLOCK_Iomuxc, 3);     //name =Iomuxc， 设置引脚复用的时钟模式为常开（进入WAIT时也开）
+
+             //设置MUXIO28为普通IO口，并关闭输入功能
+             IOMUXC_SetPinMux(IOMUXC_GPIO_AD_14_GPIOMUX_IO28, 0U);
+
+             //设置不使能高阻，100k下拉，不开opendrain，100MHz，驱动强度R0/4, 开工速度为慢速
+             IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_14_GPIOMUX_IO28, 0xA0U);  
+ 
+
+//----------------------------------------adc init --------------------------------------------
+
+    //adc参数的赋初值
+    ADC_GetDefaultConfig(&adcConfigStruct);
+
+     //配置平均次数4，软件触发，参考电压L-H，采样频率0档，adc时钟3档，无分频，精度12bit,不覆盖,不long sample,
+        不省电模式 , 不高速模式 ，不连续触发，输出同步时钟
+    ADC_Init(DEMO_ADC_BASE, &adcConfigStruct);
+
+    //CFG.13=0, adc设置为软件触发
+    ADC_EnableHardwareTrigger(DEMO_ADC_BASE, false); 
+
+    //adc校准,GS.1=0, 清除校准标志, GC.7=1, 启动adc校准; 当GC.7变为0时，检查HS.0=1则校准初步成功；
+       再检查GS.1=1，则校准失败；读取R0,并清零HS.0
+    if (kStatus_Success == ADC_DoAutoCalibration(DEMO_ADC_BASE))
+        PRINTF("ADC_DoAutoCalibration() Done.\r\n");   
+    else
+        PRINTF("ADC_DoAutoCalibration() Failed.\r\n");
+
+    adcChannelConfigStruct.channelNumber  = DEMO_ADC_USER_CHANNEL;     //adc通道14
+    adcChannelConfigStruct.enableInterruptOnConversionCompleted = false;      //不开中断
+
+//----------------------------------------adc init -------end-------------------------------------
+
+
+    while (1)
+         
+//-------------------adc read ----------------------------------------------
+      
+       //---adc1---
+      //设置adc通道HC[0].4-0=1，（当前是软件触发，只有软件触发设置adc通道后会自动触发adc转换），HC[0].7=0 不开adc中断
+      adcChannelConfigStruct.channelNumber                  = 1;      
+      ADC_SetChannelConfig(DEMO_ADC_BASE, DEMO_ADC_CHANNEL_GROUP, &adcChannelConfigStruct);
+
+      //等待完成adc转换（HS.0=1）
+      while (0 == ADC_GetChannelStatusFlags(DEMO_ADC_BASE, DEMO_ADC_CHANNEL_GROUP)); 
+    
+      //读取adc的值R[0]，并串口打印出来
+      PRINTF("ADC Value: %d\r\n", ADC_GetChannelConversionValue(DEMO_ADC_BASE, DEMO_ADC_CHANNEL_GROUP)*3300/4096  ); 
+      
+       //延时2秒
+       SDK_DelayAtLeastUs(2000000,  SDK_DEVICE_MAXIMUM_CPU_CLOCK_FREQUENCY);
+         
+
+      //---adc14---
+      adcChannelConfigStruct.channelNumber                  = 14;      
+      ADC_SetChannelConfig(DEMO_ADC_BASE, DEMO_ADC_CHANNEL_GROUP, &adcChannelConfigStruct);
+      while (0U == ADC_GetChannelStatusFlags(DEMO_ADC_BASE, DEMO_ADC_CHANNEL_GROUP));        
+      PRINTF("ADC Value: %d\r\n\r\n", ADC_GetChannelConversionValue(DEMO_ADC_BASE, DEMO_ADC_CHANNEL_GROUP)*3300/4096  );         
+
+       //延时2秒
+       SDK_DelayAtLeastUs(2000000,  SDK_DEVICE_MAXIMUM_CPU_CLOCK_FREQUENCY);
+
+         
+//-------------------adc read -----end-----------------------------------------    
+
+
+
+----------------------------------------------------
+ 
+//参考rt1010RM的寄存器P263： IOMUXC_SW_MUX_CTL_PAD_GPIO_AD_14
+//设置MUXIO28为普通IO口，并关闭输入功能
+//参数：  0x401F8010U, 0x5U, 0,     0, 0x401F80C0U  ，   0         //  0x401F8010U  -- 是指MUXIO28寄存器 
+IOMUXC_SetPinMux( muxRegister, muxMode,  inputRegister,        inputDaisy,  configRegister,  inputOnfield)
+ 
+    //muxRegister = IOMUXC_SW_MUX_CTL_PAD_MUX_MODE(muxMode) | IOMUXC_SW_MUX_CTL_PAD_SION(inputOnfield);
+       muxRegister.2-0=muxMode=5 | muxRegister.4=inputOnfield=0 ;    //bit2-0=101,  做普通IO口; bit4=0, 关闭输入
+
+    if (inputRegister != 0UL)    //这里是0，固跳过
+       *((volatile uint32_t *)inputRegister) = inputDaisy;
+ 
+-----
+
+//参考rt1010RM的寄存器P319：IOMUXC_SW_PAD_CTL_PAD_GPIO_AD_14 
+//设置不使能高阻，100k下拉，不开opendrain，100MHz，驱动强度R0/4, 开工速度为慢速
+//参数：0x401F8010U, 0x5U, 0,     0, 0x401F80C0U  ， A0
+IOMUXC_SetPinConfig( muxRegister, muxMode,  inputRegister,    inputDaisy,  configRegister,  configValue)
+ 
+     configRegister = configValue;   //0x0A0     //bit16=0 不使能高阻，bit15-14=00, 100k下拉；bit13=0待理解，bit12=0待理解；
+                                                                       //bit11=0，不开opendrain; bit7-6=10, 速度100MHz；
+                                                                       //bit5-3=100, 驱动强度=R0/4待理解；BIT0=0，切换速度为慢速。
+
+
+------------------
+
+//HC0.4-0=14，adc通道为14, HC0.7=0 不开adc中断
+//参数：ADC1 ， 0 ，config
+ADC_SetChannelConfig(  *base,  channelGroup,   *config) 
+
+    //设置adc通道
+    tmp32 = ADC_HC_ADCH(config->channelNumber);       //HC0.4-0=1414
+
+    //设置是否打开adc中断
+    if (config->enableInterruptOnConversionCompleted) 
+        tmp32 |= ADC_HC_AIEN_MASK;
+    
+    HC[0] = 14 | (0<<7);        //HC0.4-0=14, HC0.7=0
+ 
+
+---
+
+//参数：ADC1 ， 0 
+ADC_GetChannelStatusFlags(*base,  channelGroup) 
+
+     return      HS.0;
+
+---
+
+//读取adc的值R[0]
+//参数：ADC1 ， 0 
+ADC_GetChannelConversionValue( *base,  channelGroup)
+ 
+    return R[0];
+ 
+
+---------------------------------------------------------
+
+//参考让rt1010rm资料P1949：ADCx_CFG， ADCx_GC  
+//配置平均次数4，软件触发，参考电压L-H，采样频率0档，adc时钟3档，无分频，精度12bit,不覆盖,不long sample,
+   不省电模式 , 不高速模式 ，不连续触发，输出同步时钟
+ 
+//参数：ADC1 ，adcConfigStruct
+ADC_Init( *base,  *config )
+
+    CLOCK_EnableClock(s_adcClocks[ADC_GetInstance(base)]);     //设置adc时钟模式为常开（进入WAIT时也开）
+
+    //ADCx_CFG
+
+    //CFG.15-14=00设置平均次数为4，CFG.13=0选择软件触发 
+    tmp32 = base->CFG & (ADC_CFG_AVGS_MASK | ADC_CFG_ADTRG_MASK);    /* Reserve AVGS and ADTRG bits. */
+
+    //CFG.bit12-11=00 adc参考电压，CFG.9-8=00 采样频率为0档，CFG.00=11 adc时钟为3档，
+       CFG.6-5=00 分频为0档无分频，CFG.3-2=10 adc精度为12bit
+    tmp32 |= ADC_CFG_REFSEL(config->referenceVoltageSource) | ADC_CFG_ADSTS(config->samplePeriodMode) |
+                   ADC_CFG_ADICLK(config->clockSource) | ADC_CFG_ADIV(config->clockDriver) | ADC_CFG_MODE(config->resolution);
+
+    //CFG.16=0，不覆盖
+    if (config->enableOverWrite)  
+        tmp32 |= ADC_CFG_OVWREN_MASK;    
+  
+    //CFG.4=0，不long sample
+    if (config->enableLongSample)
+        tmp32 |= ADC_CFG_ADLSMP_MASK;   
+
+    //CFG.7=0，不省电模式
+    if (config->enableLowPower)
+        tmp32 |= ADC_CFG_ADLPC_MASK;   
+
+    //CFG.10=0，不高速模式
+    if (config->enableHighSpeed) 
+        tmp32 |= ADC_CFG_ADHSC_MASK;  
+ 
+    base->CFG = tmp32;
+
+    // ADCx_GC  
+    //清0
+    tmp32 = base->GC & ~(ADC_GC_ADCO_MASK | ADC_GC_ADACKEN_MASK);
+
+    //GC.6=0, 不连续触发
+    if (config->enableContinuousConversion)    
+        tmp32 |= ADC_GC_ADCO_MASK;
+
+    //GC.0=1，输出同步时钟
+    if (config->enableAsynchronousClockOutput)  
+        tmp32 |= ADC_GC_ADACKEN_MASK;
+
+    base->GC = tmp32;
+
+
+---------------
+
+//adc选择是否硬件触发
+ADC_EnableHardwareTrigger(*base, enable)
+
+    if (enable) 
+        base->CFG |= ADC_CFG_ADTRG_MASK;
+ 
+    else 
+        base->CFG &= ~ADC_CFG_ADTRG_MASK;
+ 
+
+-------------------------------
+
+//adc校准,GS.1=0, 清除校准标志, GC.7=1, 启动adc校准; 当GC.7变为0时，检查HS.0=1则校准初步成功；
+    再检查GS.1=1，则校准失败；读取R0,并清零HS.0
+//参数：ADC1
+ADC_DoAutoCalibration( *base)
+ 
+    status_t status = kStatus_Success;
+
+    bool bHWTrigger = false;
+
+    //校准不能在硬件触发的模式下进行，如果是硬件触发，则先改成软件触发校准后再改回硬件触发
+    if (0U != (ADC_CFG_ADTRG_MASK & base->CFG))
+        bHWTrigger = true;
+        ADC_EnableHardwareTrigger(base, false);
+ 
+    /* Clear the CALF and launch the calibration. */
+    base->GS = ADC_GS_CALF_MASK;    //GS.1=0, 清除校准标志
+    base->GC |= ADC_GC_CAL_MASK;    //GC.7=1, 启动adc校准
+
+    //当GC.7（启动标志）=1时，检查GS.1（失败标志）的值，如为1，则校准失败
+    while (0U != (base->GC & ADC_GC_CAL_MASK))   //当GC.7!=0
+        if (0U != (ADC_GetStatusFlags(base) & (uint32_t)kADC_CalibrationFailedFlag))   //如GS.1！=0, 说明转换失败     
+            status = kStatus_Fail;
+            break;
+           
+    //当GC.7变为0时，检查HS.0（成功标志）是否为1，如为1则校准成功
+    if (0U == ADC_GetChannelStatusFlags(base, 0U))     //如果HS.0==0,则转换失败  （这里是校准,跟转换adc值有关系吗，已理解,是的,跟转换一样要HS0置1）
+        status = kStatus_Fail;
+
+    //再次检查失败标志GS.1, 如为1，则校准失败
+    if (0U != (ADC_GetStatusFlags(base) & (uint32_t)kADC_CalibrationFailedFlag))  
+        status = kStatus_Fail;
+
+    //读取R0,并清零HS.0
+    //ADC_GetChannelConversionValue(base, 0U);
+        return base->R[channelGroup];
+
+     // 如果是硬件触发，则返回硬件触发
+    if (true == bHWTrigger)
+        ADC_EnableHardwareTrigger(base, true);
+ 
+
+---
+
+参数：ADC1 ， 0
+ ADC_GetChannelStatusFlags(*base,  channelGroup)
+
+    assert(channelGroup <8);   
+    return  （HS & (1 << channelGroup) )>> channelGroup;   //待理解，HS在rt1052的说明上只有bit0有效 （这里刚好是bit0，可能是兼容其他芯片吧）
+
+
+
+
+
+
+
+
+

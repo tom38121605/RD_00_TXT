@@ -1,0 +1,972 @@
+﻿
+
+=======================IIS初始化的流程===========================
+
+flow：
+
+main --> BOARD_InitBootPins --> BOARD_InitPins --> CLOCK_EnableClock --> IOMUXC_SetPinMux --> IOMUXC_SetPinConfig
+
+
+//main --> BOARD_InitBootPins -->   CLOCK_SetMux   --> CLOCK_SetDiv --> BOARD_EnableSaiMclkOutput
+//         --> SAI_Init   --> SAI_TransferTxCreateHandle   -->  txHandle   -->  s_saiHandle
+//         --> SAI_GetClassicI2SConfig  --> saiConfig  --> SAI_TransferTxSetConfig  -->  txHandle
+//         --> SAI_TxSetBitClockRate        
+
+
+
+------------------------------------------------------------------
+
+main()
+
+
+-------------------------------------- same：---------------------------------------------------
+
+    //SAI引脚初始化, 如:P1.3为SAI1_DATARX, 使能输入;设置P1.3为100k下拉,使能opendrain,150MHz,驱动强度R0/4,开工速度为慢速
+    //BOARD_InitBootPins();
+         BOARD_InitPins(); 
+
+    //设置SAI1的时钟和分频  
+    CLOCK_SetMux(kCLOCK_Sai1Mux, DEMO_SAI1_CLOCK_SOURCE_SELECT);
+    CLOCK_SetDiv(kCLOCK_Sai1PreDiv, DEMO_SAI1_CLOCK_SOURCE_PRE_DIVIDER);
+    CLOCK_SetDiv(kCLOCK_Sai1Div, DEMO_SAI1_CLOCK_SOURCE_DIVIDER);
+ 
+
+//--------------------------------------新加--------easy 跳过---------------------------------------------------------
+ 
+
+     //设CCGR?.3-2=3, DMAMUX的时钟模式为常开（进入WAIT时也开）
+    //DMAMUX_Init(DMAMUX);
+    //    CLOCK_EnableClock(s_dmamuxClockName[DMAMUX_GetInstance(base)]);
+                CLOCK_ControlGate(kCLOCK_xxx, 3);    //设CCGR?.3-2=3, DMAMUX的时钟模式为常开（进入WAIT时也开）
+
+    //CHCFG[0].6-0=20, 把channe0(dma0?)给sai1 tx用
+    //DMAMUX_SetSource(DDMAMUX, 0, 20);            //tx, channel 0
+       base->CHCFG[0] = ((.CHCFG[0] & ~7f) | DMAMUX_CHCFG_SOURCE(20));  //CHCFG[0].6-0=20, 或把channe0指向sai1 tx
+
+    //CHCFG[0].31=1, 使能 channel0
+    //DMAMUX_EnableChannel(DMAMUX, 0);
+        base->CHCFG[0] |= 1<<31;      //CHCFG[0].31=1, 使能 channel0
+
+    //CHCFG[1].6-0=19, 或把channel1给sai1 rx用
+    DMAMUX_SetSource(DEMO_DMAMUX, 1, 19);
+    //CHCFG[1].31=1, 使能 channel1
+    DMAMUX_EnableChannel(DEMO_DMAMUX, 1);    //rx, channel 1
+
+
+    //取得dmaConfig的配置参数
+    //EDMA_GetDefaultConfig(&dmaConfig);
+        memset(dmaConfig, 0, all);
+        dmaConfig->enableRoundRobinArbitration = false;       //不启用循环仲裁
+        dmaConfig->enableHaltOnError           = true;               //启用err模式，有err时其他中断请求被忽略
+        dmaConfig->enableContinuousLinkMode    = false;      //不启用连续链接模式
+        dmaConfig->enableDebugMode             = false;           //不启用debug模式
+
+
+    // 使能EDMA外设时钟 ，清所有中断使能ERQ，清所有状态标志INT和ERR，CR.1,2,6=0,0,0  CR.4,7=1,1   不启用循环仲裁，
+        不启用连续链接模式，不启用debug模式。有err时其他中断请求被忽略，TCDn.word2会被重新定义  （待理解）
+    //EDMA_Init(DMA0, &dmaConfig);    
+          CLOCK_EnableClock(s_edmaClockName[EDMA_GetInstance(base)]);   //  使能EDMA外设时钟  (待理解--跟前面的mux时钟区别）
+          ERQ.all =0;
+          INT.all =f;
+          ERR.all =f;
+
+          CR|=  DMA_CR_ERCA(config->enableRoundRobinArbitration)      //CR.2=0, 信道选择不启用循环仲裁，而使用固定优先级
+                   | DMA_CR_HOE(config->enableHaltOnError)                       //CR.4=1,  当有err时，其他的中断请求将被忽略      
+                   | DMA_CR_CLM(config->enableContinuousLinkMode)        //CR.6=0, 不启用连续链接模式  （待理解）
+                   | DMA_CR_EDBG(config->enableDebugMode)                    //CR.1=0, 当在debug模式时，跟工作模式一样，可开启新的通道
+                   | DMA_CR_EMLM(1));                                                          //CR.7=1, TCDn.word2会被重新定义  （待理解）
+
+
+    //给dmaTxHandle赋部分参数一（base，channel）。使能DMA0的总中断, 复位channel0所有 TCD[0]相关的寄存器 到0 值。
+    //EDMA_CreateHandle(&dmaTxHandle, DMA0, 0);
+            memset(dmaTxHandle, 0, all);
+            dmaTxHandle->base    =DMA0;             
+            dmaTxHandle->channel =  0;   //channel   
+
+             s_EDMAHandle[0] = dmaTxHandle;
+
+             //使能DMA0的总中断
+             //EnableIRQ(s_edmaIRQNumber[0][0]);
+             //       EnableIRQ(DMA0_IRQn);
+             //            NVIC_EnableIRQ(0);                   //40页
+                                   NVIC->ISER[0] =1<< (0);    //DMA0的中断
+
+             //复位所有 TCD[0]相关的寄存器 到0 值  //TCD0对应channel0 
+             tcdRegs            = &DMA0->TCD[0];  
+             tcdRegs->SADDR     = 0;    //65页 1000h， source address  待理解
+             tcdRegs->SOFF      = 0;      // source address  偏移量  （每次读取完后自动偏移的量）
+             tcdRegs->ATTR      = 0;      //设置源数据和目标数据的，地址模式和数据大小
+             tcdRegs->NBYTES    = 0;    //每个请求中要传输的字节数
+             tcdRegs->SLAST     = 0;     //调整上一次的source地址
+             tcdRegs->DADDR     = 0;   //destination address
+             tcdRegs->DOFF      = 0;     // 目标地址 偏移量
+             tcdRegs->CITER     = 0;      //ELINK+ LINKCH+ CITER
+             tcdRegs->DLAST_SGA = 0;   //调整上一次的目标地址
+             tcdRegs->CSR       = 0;       //为了适应在EDMA_ SubmitTransfer中的EDMA忙检查机制， CSR必须设置为0。
+             tcdRegs->BITER     = 0;       // ELINK+ BITER
+ 
+
+    //给dmaRxHandle赋部分参数值。使能DMA0的总中断, 复位channel1所有 TCD[1]相关的寄存器 到0 值。
+    EDMA_CreateHandle(&dmaRxHandle, DMA0, 1);
+
+
+//------------------------------------修改成dma--------------------------------------------------------
+
+    //SAI初始化，使能SAI时钟, TCSR.10-8=000 不使能DMA请求，TCSR.1-0=00 不使能DMA中断，RCSR.10.9.8.1.0 清DMA中断状态标记
+    SAI_Init(DEMO_SAI);    //--same
+
+    //给txHandle赋参数部分一(callback,txDmaHandle等)，把txHandle赋给全局变量数组，设置dma的memory和callback
+        给txDmaHandle赋参数部分二（callback,header,tcdUsed,tcdSize,tcdPool等）
+    SAI_TransferTxCreateHandleEDMA(DEMO_SAI, &txHandle, tx_callback, NULL, &dmaTxHandle);
+              memset(txHandle, 0, all);
+              txHandle->dmaHandle = txDmaHandle;  //dmaTxHandle
+              txHandle->callback  = callback;               //tx_callback
+              txHandle->userData  = userData;
+              txHandle->state =kSAI_Idle;
+              s_edmaPrivateHandle[instance][0].base   = SAI1；
+              s_edmaPrivateHandle[instance][0].handle = txHandle;
+
+               //设置tcd的memory   待理解  （对dma的专用配置）
+               //EDMA_InstallTCDMemory(txDmaHandle, STCD_ADDR(txHandle->tcd), 4);
+                      txDmaHandle->header  = 1;
+                      txDmaHandle->tcdUsed = 0;
+                      txDmaHandle->tcdSize =tcdSize;       // 4， 是指4段dma吗，或是4个字节吗  待验证
+                      txDmaHandle->flags   = 0;
+                      txDmaHandle->tcdPool = tcdPool;     // ( tcd+0x100) & ~0x1F  //举例：STCD_ADDR(0x1234) = 0x1300 待理解  
+
+               //设置dma的callback
+               //EDMA_SetCallback(txDmaHandle, SAI_TxEDMACallback, &s_edmaPrivateHandle[instance][0]);
+                      txDmaHandle->callback = SAI_TxEDMACallback;
+                      txDmaHandle->userData = null;
+
+
+    //同上，给rxHandle赋初值等
+    SAI_TransferRxCreateHandleEDMA(DEMO_SAI, &rxHandle, rx_callback, NULL, &dmaRxHandle);
+ 
+
+//------------------------------------似same--------------------------------------------------------
+
+    //给config赋初值（用于写入寄存器和给txHandle赋值），设置channelmask, 同异步，主从机，位参数，
+       同步性参数，串行数据参数，fifio参数    
+    //SAI_GetClassicI2SConfig(&saiConfig, DEMO_AUDIO_BIT_WIDTH, kSAI_Stereo, 1U << DEMO_SAI_CHANNEL);
+           SAI_GetCommonConfig(config, bitWidth, kSAI_Stereo, saiChannelMask);
+
+
+//------------------------------------修改成DMA--------------------------------------------------------
+
+    saiConfig.syncMode              = kSAI_ModeAsync;
+    saiConfig.bitClock.bclkPolarity = kSAI_PolarityActiveLow;
+    saiConfig.masterSlave           = kSAI_Slave;           //这里变成了slave， 待理解
+
+    // 设置txhand结构体的参数部分二(bytesPerFrame,channel*3,count)，，把config中的参数写入到寄存器和赋值给txhandle; 
+        使能信道0,设置bit参数(TCR2),设置SerialData参数(TCR4)，设置sync参数(TCR4)，设置fifo参数之一(TCR4) 
+    TTCR3.17-16=0(TCE=0, 不一样)
+    SAI_TransferTxSetConfigEDMA(DEMO_SAI, &txHandle, &saiConfig);
+
+    saiConfig.syncMode = kSAI_ModeSync;
+    SAI_TransferRxSetConfigEDMA(DEMO_SAI, &rxHandle, &saiConfig);
+
+
+//------------------------------------same--------------------------------------------------------
+
+     //设置 TCR2.7-0 设置tx的bclk的分频率--simple easy
+    SAI_TxSetBitClockRate(DEMO_SAI, DEMO_AUDIO_MASTER_CLOCK, kSAI_SampleRate16KHz, kSAI_WordWidth16bits,  2);
+
+    SAI_RxSetBitClockRate(DEMO_SAI, DEMO_AUDIO_MASTER_CLOCK, kSAI_SampleRate16KHz, kSAI_WordWidth16bits,  2);
+
+    /* master clock configurations */
+    BOARD_MASTER_CLOCK_CONFIG();
+
+
+//------------------------------------same--------------------------------------------------------
+
+    //功放初始化
+    if (CODEC_Init(&codecHandle, &boardCodecConfig) != kStatus_Success)
+        assert(false);
+
+
+    //功放设置音量
+    if (CODEC_SetVolume(&codecHandle, kCODEC_PlayChannelHeadphoneLeft | kCODEC_PlayChannelHeadphoneRight,
+                        DEMO_CODEC_VOLUME) != kStatus_Success)
+        assert(false);
+
+
+    while(1) 
+
+
+
+------------------------------------------
+
+//给dmaTxHandle赋部分参数一（base，channel）。使能DMA0的总中断, 复位channel0所有 TCD[0]相关的寄存器 到0 值。
+参数: dmaTxHandle,  DMA1, 0
+EDMA_CreateHandle(  *handle,   *base,   channel)
+
+    edma_tcd_t   *tcdRegs;
+
+    memset(handle, 0, all);
+
+    dmaTxHandle->base    =DMA0;             
+    dmaTxHandle->channel =  channel;     //0
+
+    //取得DMA编号
+    edmaInstance = EDMA_GetInstance(DMA0);  //取得DMA0的编号0
+
+    //channelIndex = ( EDMA_GetInstanceOffset(0) * 16 ) + channel;
+          channelIndex = EDMA_GetInstance(DMA0) *16 +0=0;   //0
+
+    //s_EDMAHandle[channelIndex] = dmaTxHandle;
+         s_EDMAHandle[0] = dmaTxHandle;
+
+
+    //使能DMA0的总中断
+    //EnableIRQ(s_edmaIRQNumber[0][0]);
+    //       EnableIRQ(DMA0_IRQn);
+    //            NVIC_EnableIRQ(0);                   //40页
+                          NVIC->ISER[0] =1<< (0);    //DMA0的中断
+
+    //复位所有 TCD[0]相关的寄存器 到0 值  //TCD0对应channel0
+ 
+    tcdRegs            = &DMA0->TCD[0];  
+
+    tcdRegs->SADDR     = 0;    //65页 1000h， source address  待理解
+    tcdRegs->SOFF      = 0;      // source address  偏移量  （每次读取完后自动偏移的量）
+    tcdRegs->ATTR      = 0;      //设置源数据和目标数据的，地址模式和数据大小
+    tcdRegs->NBYTES    = 0;    //每个请求中要传输的字节数
+    tcdRegs->SLAST     = 0;     //调整上一次的source地址
+
+    tcdRegs->DADDR     = 0;   //destination address
+    tcdRegs->DOFF      = 0;     // 目标地址 偏移量
+
+    tcdRegs->CITER     = 0;    //ELINK+ LINKCH+ CITER
+
+    tcdRegs->DLAST_SGA = 0;   //调整上一次的目标地址
+    tcdRegs->CSR       = 0;       //为了适应在EDMA_ SubmitTransfer中的EDMA忙检查机制， CSR必须设置为0。
+    tcdRegs->BITER     = 0;       // ELINK+ BITER
+ 
+
+
+--------------
+
+//使能EDMA外设时钟 ，CR.1,2,6=0,0,0  CR.4,7=1,1   不启用循环仲裁，不启用连续链接模式，不启用debug模式。
+   有err时其他中断请求被忽略，TCDn.word2会被重新定义  （待理解）
+//参数： DMA0， dmaConfig
+EDMA_Init(  *base,  *config)
+ 
+    // 使能EDMA外设时钟  (待理解--跟前面的mux时钟区别）
+    CLOCK_EnableClock(s_edmaClockName[EDMA_GetInstance(base)]); 
+
+    // 清除所有16个通道 dma请求的使能
+    /* clear all the enabled request, status to make sure EDMA status is in normal condition */
+    base->ERQ = 0;                   //清除所有0-15个通道 dma请求的使能
+    base->INT = 0xFFFFFFFF;      //清除所有0-15个通道 dma请求的中断标志
+    base->ERR = 0xFFFFFFFF;     //清除所有0-15个通道 err请求的中断标志
+ 
+    //CR.1,2,6=0,0,0  CR.4,7=1,1   不启用循环仲裁，不启用连续链接模式，不启用debug模式。有err时其他中断请求被忽略。
+        TCDn.word2会被重新定义  （待理解）
+    CR&= ~( 1<<2 | 1<<4 | 1<<6 | 1<<1);
+    CR|=  DMA_CR_ERCA(config->enableRoundRobinArbitration)      //CR.2=0, 信道选择不启用循环仲裁，而使用固定优先级
+              | DMA_CR_HOE(config->enableHaltOnError)                       //CR.4=1,  当有err时，其他的中断请求将被忽略      
+              | DMA_CR_CLM(config->enableContinuousLinkMode)        //CR.6=0, 不启用连续链接模式  （待理解）
+              | DMA_CR_EDBG(config->enableDebugMode)                    //CR.1=0, 当在debug模式时，跟工作模式一样，可开启新的通道
+              | DMA_CR_EMLM(1));                                                          //CR.7=1, TCDn.word2会被重新定义  （待理解）
+  
+
+------------------------------------------
+
+// 设置txhand结构体的参数部分二(bytesPerFrame,channel*3,count)，把config中的参数写入到寄存器和赋值给txhandle; 
+    使能信道0,设置bit参数(TCR2),设置SerialData参数(TCR4)，设置sync参数(TCR4)，设置fifo参数之一(TCR4) 
+    TTCR3.17-16=0(TCE=0, 不一样)
+//输入参数： SAI1， saiConfig        
+//输出参数：txHandle
+SAI_TransferTxSetConfigEDMA(*base,  *handle,   *saiConfig)
+ 
+    //选择channel，  设置bit参数(TCR2),设置SerialData参数(TCR4)，设置sync参数(TCR4)，设置fifo参数之二(TCR4) 
+    SAI_TxSetConfig(base, saiConfig);     //--same 
+ 
+    //取得传送大小，在EDMA 中用
+    if (saiConfig->serialData.dataWordLength == 24)    //16!=24   (不一样，待理解)
+        txHandle->bytesPerFrame = 4;
+    else
+        txHandle->bytesPerFrame = saiConfig->serialData.dataWordLength / 8;
+
+    txHandle->channel     = saiConfig->startChannel;            //--same 
+    txHandle->channelMask = saiConfig->channelMask;       //--same 
+    txHandle->channelNums = saiConfig->channelNums;      //--same 
+
+    //TCR3.17-16=00,  TCE=0,关闭两个输出通道
+    base->TCR3 &= ~I2S_TCR3_TCE_MASK;      //TCR3.17-16=00,  关闭两个输出通道  (不一样，待理解)
+ 
+    txHandle->count =  32 - saiConfig->fifo.fifoWatermark;     //FSL_FEATURE_SAI_FIFO_COUNT  
+ 
+
+----------------
+
+
+//TCR3.17-16=01  , 使能信道0，  设置bit参数(TCR2),设置SerialData参数(TCR4)，设置sync参数(TCR4)，设置fifo参数(TCR4) 之二
+//输入参数： SAI1， saiConfig     
+//输出：  saiConfig，TCR3, TCR2, TCR4, TCR5, TMR    
+SAI_TxSetConfig( *base,  *config)
+ 
+    assert( 2 != -1 );     //SAI_CHANNEL_COUNT
+
+    uint8_t    i           = 0;
+    uint32_t  val        = 0;
+    uint8_t    channelNums = 0;
+
+    // reset i2s transmitter  
+    //SAI_TxReset(base);
+        base->TCSR = I2S_TCSR_SR_MASK | I2S_TCSR_FR_MASK;   //TCSR.24,25=1,1 ,  软复位 transmitter，复位fifo
+        base->TCSR &= ~I2S_TCSR_SR_MASK;                              //TCSR.24=0 ， 清复位
+
+        //清零所有 Tx register 
+        base->TCR2 = 0;
+        base->TCR3 = 0;
+        base->TCR4 = 0;
+        base->TCR5 = 0;
+        base->TMR  = 0;     //待理解
+
+    //如果channel为0，则把channel设为1  （至少要有一个channel）
+    if (config->channelMask == 0)
+        .channelMask = 1 << .startChannel=1<<0;  
+
+    for (i = 0; i < 2; i++)  
+
+        //取得channel数量，取得最后一个通道  （因channelMask=1<<0，固channelNums=1，endChannel=0 ）
+        if (   IS_SAI_FLAG_SET(  1 << i,   1<< channelMask   ）  )      //如果1<<i 等于1<<channelMask（=0）, 则下面
+            channelNums++;                                       
+            config->endChannel = i;                             
+
+    for (i = 0; i < 2; i++)    
+        //取得第一个通道  （因channelMask=1<<0，固startChannel=0）
+        if ( IS_SAI_FLAG_SET(  1 << i,   1<< channelMask    ))         //如果1<<i 等于1<<channelMask（=0）, 则下面
+            config->startChannel = i;                                              //startChannel=0
+            break;                                                                            //确定第一个后，要马上退出
+
+    config->channelNums = channelNums;    // 1
+
+    if (config->channelNums > 1)                              //因等于1，不执行下面的
+        base->TCR4 &= ~I2S_TCR4_FCOMB_MASK;     //TCR4.27-26=00, 不使能combin 模式 待理解
+
+    //使能所选择的channel
+    base->TCR3 &= ~I2S_TCR3_TCE_MASK;                    //TCR3.17-16=00  , 先清0
+    base->TCR3 |= I2S_TCR3_TCE(channelMask<<0);      //TCR3.17-16=01  , 使能信道0
+
+    if (config->syncMode == kSAI_ModeAsync)       //如果是0，异步
+        val = base->TCR2;  
+        val &= ~I2S_TCR2_SYNC_MASK;                   //清零TCR2.31-30 
+        base->TCR2 = val | I2S_TCR2_SYNC(0);         //设置TCR2.31-30=00, 异步
+ 
+    if (config->syncMode == kSAI_ModeSync)       //如果是1，同步   
+        val = base->TCR2;
+        val &= ~I2S_TCR2_SYNC_MASK;                  //清零TCR2.31-30 
+        base->TCR2 = (val | I2S_TCR2_SYNC(1));       //设置TCR2.31-30=01,   同步
+
+        // If sync with Rx, should set Rx to async mode  
+        val = base->RCR2;
+        val &= ~I2S_RCR2_SYNC_MASK;                       //清零RCR2.31-30 
+        base->RCR2 = ( val | I2S_RCR2_SYNC(0) );         //设置RCR2.31-30=01,   异步
+
+
+    // 设置bit参数(TCR2)，bclk和mclk，时钟相位，使用master时钟还是slaver时钟
+    SAI_TxSetBitclockConfig(base, config->masterSlave, &config->bitClock);
+
+    //TCR5设置Word 0 Width等 待理解，设置SerialData参数(TCR4)， TCR4.20-16=1 每帧2个字节, 
+      TCR4.4=1  高位在前, TCR4.5=1,输出模式, 缺省时为低电平 （而不是三态）
+    SAI_TxSetSerialDataConfig(base, &config->serialData);
+
+     // 设置sync参数（TCR4），tcr4.2=0 持续产生内部帧sync, tcr4.3=1 , 早sync, tcr4.1=1 ，低电平sync, tcr4.0=1 ，
+        由master内部产生sync,tcr4.12-8=15 ，Sync WidtchannelMaskh为16   (待理解)
+    SAI_TxSetFrameSyncConfig(base, config->masterSlave, &config->frameSync);
+ 
+    //设置fifo参数(TCR4)，tcr4.28=1  当fifo Error 重复发送, tcr4.25-24=00 不使能FIFO packing,TCR1.4-0=32/2, 设置tx水位线 
+    SAI_TxSetFifoConfig(base, &config->fifo);
+
+
+------------------------------------------
+
+
+// 给config赋初值（以后用于写入寄存器和给txHandle赋值），设置channelmask, 同异步，主从机，位参数，
+    同步性参数，串行数据参数，fifio参数   --待理解
+//输入参数： kSAI_WordWidth16bits， kSAI_Stereo，1<<0          // 16,  0 ,  1
+//输出参数： saiConfig 
+SAI_GetCommonConfig(*config,  bitWidth,  mode,  saiChannelMask)
+
+    memset(config, 0,all);
+
+    config->channelMask= saiChannelMask<<0 =1<<0;   // TCR3.17-16=01,使能信道0. 如设2个信道则TCR3.17-16=11
+    config->syncMode = kSAI_ModeAsync;      // TCR2.31-30=00, 异步
+    config->masterSlave = kSAI_Master;          // 0为主机， 当主机时tcr4.0=1 ，由master内部产生sync  待理解 
+
+    //设置bit参数
+    config->bitClock.bclkSrcSwap    = false;                                    //TCR2.29=0，  BCS关于TX和RX时钟交换，待理解
+    config->bitClock.bclkInputDelay = false;                                   //TCR2.28=0，BCI待理解  （关于bck）   
+    config->bitClock.bclkPolarity   = kSAI_SampleOnRisingEdge;     //TCR2.25=1，时钟采样为下降沿 (输出)   
+    config->bitClock.bclkSource     = kSAI_BclkSourceMclkDiv;        //TCR2.27-26=01，选 (MCLK) 1 option，待理解  
+                                                                                                         如果时外部时钟则本设置无效    
+
+    //同步性参数设置
+    config->frameSync.frameSyncWidth = 32;                                       //32bit，tcr4.12-8=31 ，设置同步帧长度为31+1
+    config->frameSync.frameSyncEarly = true;                                      //tcr4.3=1 ,  早sync，待理解，先跳过        
+    config->frameSync.frameSyncGenerateOnDemand = false;             //tcr4.2=0 持续产生内部帧sync ,待理解
+    config->frameSync.frameSyncPolarity = kSAI_PolarityActiveLow;     //tcr4.1=1 ，Frame sync is active low.，待理解，先跳过  
+
+
+    //串行数据参数设置
+    config->serialData.dataMode = kSAI_DataPinStateOutputZero;  //TCR4.5=1, 输出模式,被屏蔽或信道被禁用时, 引脚为低电平  
+    config->serialData.dataOrder           = kSAI_DataMSB;  //   TCR4.4=1， 高位在前
+    config->serialData.dataWord0Length     = 32;              // 32bit，TCR5.20-16
+    config->serialData.dataWordLength      = 32;               // 32bit
+    config->serialData.dataWordNLength     = 32;             // 32bit，TCR5.28-24
+    config->serialData.dataFirstBitShifted = 32；              // 32bit，TCR5.12-8 
+    config->serialData.dataWordNum         = 2;                // TCR4.20-16=01， 2个字节（应指左右声道数2个）     
+    config->serialData.dataMaskedWord      = mode;       // =kSAI_Stereo=0, 立体声  //TMR=0
+
+
+    //设置fifo参数 
+    config->fifo.fifoWatermark = 32 / 2 ;   // TCR1.4-0 =32/2, 设置tx水位线  已理解 
+                                                                                                                 
+    config->fifo.fifoContinueOneError = true;       //tcr4.28=1， 遇到fifo错误时，重复发送同一个字节 
+ 
+
+
+------------------------------------------
+
+//给txHandle赋参数部分一(callback,txDmaHandle等)，把txHandle赋给全局变量数组，设置dma的memory和callback
+  给txDmaHandle赋参数部分二（callback,header,tcdUsed,tcdSize,tcdPool等）
+//参数： SAI1, txHandle, tx_callback, NULL, dmaTxHandle
+SAI_TransferTxCreateHandleEDMA(  *base,  *handle,  callback,  *userData, *txDmaHandle)
+
+    instance = SAI_GetInstance(base);
+
+    memset(txHandle, 0, all);
+
+    txHandle->dmaHandle = txDmaHandle;  //dmaTxHandle
+    txHandle->callback  = callback;               //tx_callback
+    txHandle->userData  = userData;
+
+    txHandle->state =kSAI_Idle;
+
+    s_edmaPrivateHandle[instance][0].base   = SAI1；
+    s_edmaPrivateHandle[instance][0].handle = txHandle;
+
+
+    //设置tcd的memory   待理解  （对dma的专用配置）
+    //EDMA_InstallTCDMemory(txDmaHandle, STCD_ADDR(txHandle->tcd), 4);
+           txDmaHandle->header  = 1;
+           txDmaHandle->tcdUsed = 0;
+           txDmaHandle->tcdSize =tcdSize;   //4， 是指4段dma吗  待验证
+           txDmaHandle->flags   = 0;
+           txDmaHandle->tcdPool = tcdPool;  // ( tcd+0x100) & ~0x1F  //举例：STCD_ADDR(0x1234)  = 0x1300 待理解  
+
+    //设置dma的callback
+    //EDMA_SetCallback(txDmaHandle, SAI_TxEDMACallback, &s_edmaPrivateHandle[instance][0]);
+           txDmaHandle->callback = SAI_TxEDMACallback;
+           txDmaHandle->userData = null;
+
+
+
+
+--------------------
+ 
+
+//参考： TCSR   P1046
+//SAI初始化，使能SAI时钟, TCSR.10-8=000 不使能DMA请求，TCSR.1-0=00 不使能DMA中断，RCSR.10.9.8.1.0 清DMA中断状态标记
+//参数：SAI1
+SAI_Init( *base)
+ 
+    //使能SAI时钟
+    CLOCK_EnableClock(s_saiClock[SAI_GetInstance(base)]); 
+             //CLOCK_EnableClock(kCLOCK_Iomuxc);    //设置CCGR?.3-2=3
+                  CLOCK_ControlGate(kCLOCK_Iomuxc, 3);    //设置SAI1的时钟模式为常开（进入WAIT时也开）
+ 
+    //不使能DMA请求，不使能DMA中断
+    base->TCSR &=  ~(bit8 | bit9 | bit10 | bit0 | bit1);   //bit 10-8=000,  bit1-0=00
+
+    //清DMA中断状态标记
+    base->RCSR &=  ~(bit8 | bit9 | bit10 | bit0 | bit1);   //bit 10-8=000,  bit1-0=00
+
+
+
+
+====================IIS 发出数据流程=============================
+
+write flow：
+
+//main --> SAI_TransferSendNonBlocking --> (xfer) -->  txHandle  --> SAI_TxEnableInterrupts --> SAI_TxEnable
+
+//         (TX fiforequest irq)  --> SAI1_DriverIRQHandler --> ( s_saiRxIsr ) --> SAI_TransferTxHandleIRQ
+//          --> SAI_WriteNonBlocking  --> （saiHandle[1][0].callback） --> tx_callback  -->  [ SAI_TransferAbortSend ]
+ 
+
+-------------------------------------------------------------------------------------------
+ 
+main()
+
+    while(1) 
+
+               if (emptyBlock < BUFFER_NUMBER)   //有音乐数据进来，把进来的数据发送出去
+                 
+                      xfer.data     = Buffer + tx_index * BUFFER_SIZE;
+                      xfer.dataSize = BUFFER_SIZE;
+
+--                   //TCSR.8,10=1,1，把要发送的数据存入到txHandle的队列里，使能error中断，使能FIFI请求中断，开启发送
+                      if (kStatus_Success == SAI_TransferSendEDMA(DEMO_SAI, &txHandle, &xfer))                     
+                           tx_index++;
+                     
+                      if (tx_index == BUFFER_NUMBER)                     
+                           tx_index = 0U;
+                     
+                
+
+-------------------------------------------
+
+
+参数： DMA0, txHandle, xfer
+SAI_TransferSendEDMA(  *base,  *handle,  *xfer)
+
+    edma_transfer_config_t     config = {0};
+
+   //----------------------------easy-----------------------------------------------------------
+
+    //destAddr = SAI_TxGetDataRegisterAddress(base, txHandle->channel);
+           destAddr = base->TDR[0];
+
+    destOffset           = 0;
+
+    if ( (xfer->data == NULL) || (xfer->dataSize == 0) )   //如果数据为空，则返回err
+        return   kStatus_InvalidArgument; 
+
+    if (txHandle->saiQueue[.queueUser].data != NULL)      //如果下一个司机已在卡车上排队，则表示队列已满，所有卡车都在排队卸货 
+        return kStatus_SAI_QueueFull; 
+
+    txHandle->state = kSAI_Busy;
+
+    //分配下一个排队司机到新的卡车 （接收司机是同一批4个司机，但有两个编号，下一个排队的号和下一个卸货的号）
+    txHandle->transferSize[ .queueUser]      = xfer->dataSize;   //或nouse
+    txHandle->saiQueue[ .queueUser].data     = xfer->data;
+    txHandle->saiQueue[ .queueUser].dataSize = xfer->dataSize;
+    txHandle->queueUser                            = ( .queueUser + 1) % 4;
+ 
+   //----------------------------easy----end----------------------------------------------------
+
+
+    //准备edma的配置参数(destAddr,srcAddr,transferBytes,srcOffset等)，保存到config中
+    EDMA_PrepareTransferConfig(&config, xfer->data,  handle->bytesPerFrame,  handle->bytesPerFrame,
+                                                    destAddr,  handle->bytesPerFrame, destOffset,
+                                                     handle->count * handle->bytesPerFrame, xfer->dataSize);
+
+    //保存  minor byte transfer count （最小传送字节）
+    txHandle->nbytes = .count * .bytesPerFrame;  //16*4=64
+
+
+
+
+
+
+    state=EDMA_SubmitTransfer(txHandle->dmaHandle, &config);  //dmaTxHandle
+
+    if (state != kStatus_Success) 
+        return kStatus_SAI_QueueFull;
+
+
+ 
+ 
+    /* Start DMA transfer */
+    EDMA_StartTransfer(txHandle->dmaHandle);
+
+
+
+    //TCSR.0=1,使能DMA请求
+    //SAI_TxEnableDMA(base, kSAI_FIFORequestDMAEnable, true);
+    //       SAI_TxEnableDMA(DMA0, 1<<0, 1);
+                   TCSR = (TCSR & 0xFFE3FFFF) | (1<<0);     //TCSR.0=1,使能DMA请求
+
+    //判断是否是同步模式，如果是同步模式先使能 receiver，使能Transmitter
+    SAI_TxEnable(base, true);
+
+         if(base->TCR2.31-30=01)    //判断是否为同步模式
+             base->RCSR.31=1;         //使能 receiver 
+         base->TCSR.31=1;             //使能 Transmitter
+
+
+    //TCR3.17-16=1, 使能通道1的FIFO 
+    TCR3 |= I2S_TCR3_TCE(handle->channelMask);
+
+
+
+--------
+
+参数：dmaTxHandle， config
+EDMA_SubmitTransfer(  *handle,   *config)
+
+    *tcdRegs =DMA0->TCD[dmaTxHandle->channel]=TCD[0];
+
+
+    if (dmaTxHandle->tcdPool == NULL) 
+        (略)            
+
+    else /* Use the TCD queue. */
+    
+        uint32_t primask;
+        uint16_t csr;
+        int8_t currentTcd;
+        int8_t previousTcd;
+        int8_t nextTcd;
+        int8_t tmpTcdUsed;
+        int8_t tmpTcdSize;
+
+        /* Check if tcd pool is full. */
+        primask    = DisableGlobalIRQ();    //关闭全局变量    作用 -- 待理解
+
+        tmpTcdUsed = dmaTxHandle->tcdUsed;     //0
+        tmpTcdSize = dmaTxHandle->tcdSize;        //4
+
+        //如果队列已满，则开全局中断，返回full    //待理解
+        if (tmpTcdUsed >= tmpTcdSize)        
+            EnableGlobalIRQ(primask);
+            return kStatus_EDMA_QueueFull;
+       
+        //或分配司机到卡车去排队
+        currentTcd = dmaTxHandle->tail;
+
+        //取得下一辆卡车编号
+        dmaTxHandle->tcdUsed++;
+        nextTcd = currentTcd + 1;
+        if (nextTcd == dmaTxHandle->tcdSize)       
+            nextTcd = 0;       
+        dmaTxHandle->tail = nextTcd;
+        EnableGlobalIRQ(primask);
+
+        //previousTcd = currentTcd != 0 ? currentTcd - 1 : (handle->tcdSize - 1);
+           if ( currentTcd != 0 )
+               previousTcd =  currentTcd - 1;
+           else
+                previousTcd = 4-1;
+
+ 
+        //把当前tcd中所有的寄存器清0
+        EDMA_TcdReset(&handle->tcdPool[currentTcd]);
+
+        //配置tcd的各寄存器（SADDR，DADDR，NBYTES等）
+        EDMA_TcdSetTransferConfig(&dmaTxHandle->tcdPool[currentTcd], config, NULL);
+
+
+        //使能 major interrupt  
+        dmaTxHandle->tcdPool[currentTcd].CSR |= 1<<1;
+
+
+        // 将当前TCD与下一个TCD联系起来，以identification当前TCD  
+        dmaTxHandle->tcdPool[currentTcd].DLAST_SGA = .tcdPool[nextTcd];
+
+ 
+        /* Chain from previous descriptor unless tcd pool size is 1(this descriptor is its own predecessor). */
+        if (currentTcd != previousTcd)
+        
+            /* Enable scatter/gather feature in the previous TCD block. */
+            csr = handle->tcdPool[previousTcd].CSR | (DMA_CSR_ESG_MASK);
+            csr &= ~(DMA_CSR_DREQ_MASK);
+            handle->tcdPool[previousTcd].CSR = csr;
+            /*
+                Check if the TCD block in the registers is the previous one (points to current TCD block). It
+                is used to check if the previous TCD linked has been loaded in TCD register. If so, it need to
+                link the TCD register in case link the current TCD with the dead chain when TCD loading occurs
+                before link the previous TCD block.
+            */
+ 
+            if (tcdRegs->DLAST_SGA == &handle->tcdPool[currentTcd])
+            
+                /* Clear the DREQ bits for the dynamic scatter gather */
+                tcdRegs->CSR |= DMA_CSR_DREQ_MASK;
+
+                /* Enable scatter/gather also in the TCD registers. */
+                csr = tcdRegs->CSR | DMA_CSR_ESG_MASK;
+
+                /* Must write the CSR register one-time, because the transfer maybe finished anytime. */
+                tcdRegs->CSR = csr;
+                /*
+                    It is very important to check the ESG bit!
+                    Because this hardware design: if DONE bit is set, the ESG bit can not be set. So it can
+                    be used to check if the dynamic TCD link operation is successful. If ESG bit is not set
+                    and the DLAST_SGA is not the next TCD address(it means the dynamic TCD link succeed and
+                    the current TCD block has been loaded into TCD registers), it means transfer finished
+                    and TCD link operation fail, so must install TCD content into TCD registers and enable
+                    transfer again. And if ESG is set, it means transfer has not finished, so TCD dynamic
+                    link succeed.
+                */
+                if (0U != (tcdRegs->CSR & DMA_CSR_ESG_MASK))                
+                    tcdRegs->CSR &= ~(uint16_t)DMA_CSR_DREQ_MASK;
+                    return kStatus_Success;
+                
+                /*
+                    Check whether the current TCD block is already loaded in the TCD registers. It is another
+                    condition when ESG bit is not set: it means the dynamic TCD link succeed and the current
+                    TCD block has been loaded into TCD registers.
+                */
+ 
+                if (tcdRegs->DLAST_SGA == (uint32_t)&handle->tcdPool[nextTcd])
+                
+                    return kStatus_Success;
+               
+                /*
+                    If go to this, means the previous transfer finished, and the DONE bit is set.
+                    So shall configure TCD registers.
+                */
+           
+            else if (tcdRegs->DLAST_SGA != 0UL)           
+                /* The current TCD block has been linked successfully. */
+                return kStatus_Success;
+             
+            else
+             
+                /*
+                    DLAST_SGA is 0 and it means the first submit transfer, so shall configure
+                    TCD registers.
+                */
+          
+        
+        /* There is no live chain, TCD block need to be installed in TCD registers. */
+        EDMA_InstallTCD(handle->base, handle->channel, &handle->tcdPool[currentTcd]);
+
+        /* Enable channel request again. */
+        if (0U != (handle->flags & EDMA_TRANSFER_ENABLED_MASK))        
+            handle->base->SERQ = DMA_SERQ_SERQ(handle->channel);
+       
+
+        return kStatus_Success;
+ 
+
+-----
+
+//配置tcd的各寄存器（SADDR，DADDR，NBYTES等）
+//参数：dmaTxHandle->tcdPool[currentTcd],  config,  NULL
+EDMA_TcdSetTransferConfig( *tcd,  *config,  *nextTcd)
+
+    assert    config->srcAddr % 4  == 0  ;
+    assert   config->destAddr % 4 == 0 ;
+
+    tcd->SADDR = config->srcAddr;      //xfer->data
+    tcd->DADDR = config->destAddr;   //TDR[0]
+
+    //ATTR.10-8=010, ATTR.2-0=010 源数据和目标数据都是32bit
+    //tcd->ATTR = DMA_ATTR_SSIZE(config->srcTransferSize) | DMA_ATTR_DSIZE(config->destTransferSize);
+         tcd->ATTR = DMA_ATTR_SSIZE( 2 ) | DMA_ATTR_DSIZE( 2 );   //ATTR.10-8=010, ATTR.2-0=010
+ 
+    tcd->SOFF = config->srcOffset;                  //4 
+    tcd->DOFF = config->destOffset;               //0
+    tcd->NBYTES = config->minorLoopBytes;        //64
+    tcd->CITER = config->majorLoopCounts;         //16
+    tcd->BITER = config->majorLoopCounts;          //16
+
+
+    /* Enable scatter/gather processing */
+    if (nextTcd != NULL)
+ 
+        tcd->DLAST_SGA =  nextTcd;  //下一个数据要发送的目标地，或可以设置成TDR[1]
+
+       //tcd->CSR = (tcd->CSR |DMA_CSR_ESG_MASK) & ~DMA_CSR_DREQ_MASK;
+        tcd->CSR = (tcd->CSR |  1<<4) & ~ (1<<3);
+ 
+
+
+--------------------------
+
+ 
+//参数：txHandle->dmaHandle  (即dmaTxHandle)
+EDMA_StartTransfer(  *handle)
+ 
+    uint32_t tmpCSR = 0;
+
+    if (handle->tcdPool == NULL)     
+        handle->base->SERQ = DMA_SERQ_SERQ(handle->channel);
+     
+    else /* Use the TCD queue. */
+     
+        uint32_t primask;
+        edma_tcd_t *tcdRegs = &handle->base->TCD[handle->channel];
+
+        handle->flags |= EDMA_TRANSFER_ENABLED_MASK;
+
+        /* Check if there was at least one descriptor submitted since reset (TCD in registers is valid) */
+        if (tcdRegs->DLAST_SGA != 0U)
+         
+            primask = DisableGlobalIRQ();
+            /* Check if channel request is actually disable. */
+            if ((handle->base->ERQ & ((uint32_t)1U << handle->channel)) == 0)
+             
+                /* Check if transfer is paused. */
+                tmpCSR = tcdRegs->CSR;
+                if ((0 == (tmpCSR & DMA_CSR_DONE_MASK)) || (0U != (tmpCSR & DMA_CSR_ESG_MASK)))
+                 
+                    /*
+                        Re-enable channel request must be as soon as possible, so must put it into
+                        critical section to avoid task switching or interrupt service routine.
+                    */
+                    handle->base->SERQ = DMA_SERQ_SERQ(handle->channel);
+                
+             
+            EnableGlobalIRQ(primask);
+        
+
+
+
+
+ ---------------------------
+
+//准备edma的config配置参数(destAddr,srcAddr,transferBytes,srcOffset等) 
+EDMA_PrepareTransferConfig(edma_transfer_config_t *config,    //config
+                                void         *srcAddr,                //xfer->data
+                                uint32_t    srcWidth,               //txHandle->bytesPerFrame  //4
+                                int16_t      srcOffset,               //txHandle->bytesPerFrame  //4
+                                void         *destAddr,               //destAddr     //TDR[0]
+                                uint32_t    destWidth,              //txHandle->bytesPerFrame  //4
+                                int16_t      destOffset,              //destOffset    //0
+                                uint32_t     bytesEachRequest,  //txHandle->count * txHandle->bytesPerFrame  //16*4=64
+                                uint32_t     transferBytes)           //xfer->dataSize  //=BUFFER_SIZE=1024
+ 
+   
+    memset(config, 0, all );
+
+    config->destAddr =  destAddr;      //TDR[0]
+    config->srcAddr  =   srcAddr;        //xfer->data
+ 
+    config->minorLoopBytes   = bytesEachRequest;                                    //64
+    config->majorLoopCounts  = transferBytes / bytesEachRequest;            //1024/64=16
+    config->srcTransferSize  = EDMA_TransferWidthMapping(srcWidth);      //2
+    config->destTransferSize = EDMA_TransferWidthMapping(destWidth);   //2
+    config->destOffset       = destOffset;    //0
+    config->srcOffset        =  srcOffset;       //4
+ 
+
+-----
+
+//取得配置值，或给相关的寄存器配置用
+//参数： srcWidth =4
+EDMA_TransferWidthMapping( width)
+
+    transferSize = kEDMA_TransferSize1Bytes;  //0
+
+    switch (width)
+   
+        // width 8bit  
+        case 1U:
+            transferSize = kEDMA_TransferSize1Bytes;  //0
+            break;
+
+        // width 16bit  
+        case 2U:
+            transferSize = kEDMA_TransferSize2Bytes;  //1
+            break;
+
+        //width 32bit  
+        case 4U:
+            transferSize = kEDMA_TransferSize4Bytes;  //2
+            break;
+
+        // width 64bit  
+        case 8U:
+            transferSize = kEDMA_TransferSize8Bytes;  //3
+            break;
+
+        // width 256bit  
+        case 32U:
+            transferSize = kEDMA_TransferSize32Bytes;  //5
+            break;
+
+        default:
+           
+            assert(false);
+            break;
+
+    return transferSize;
+
+
+
+-------------
+
+//TCSR.0=1,使能DMA请求
+参数： SAI1, 1, 1
+SAI_TxEnableDMA(  *base,   mask,  enable)
+ 
+    if (enable)   
+        base->TCSR |= 1<<0;     //TCSR.0=1,使能DMA请求
+    else 
+        base->TCSR &=~(1<<0);
+ 
+
+
+
+
+
+=======================IIS 输入读取流程========SAI1==========================
+
+rx flow：
+
+//main --> SAI_TransferReceiveNonBlocking --> (xfer) -->  rxHandle  -->  SAI_RxEnableInterrupts  -->  SAI_RxEnable
+
+//         (RX fiforequest irq)  --> --> SAI1_DriverIRQHandler --> ( rxHandle ) -->   SAI_TransferRxHandleIRQ 
+//         --> SAI_ReadNonBlocking  --> （saiHandle[1][1]）  -->  rx_callback  -->  [ SAI_TransferAbortReceive ]
+
+
+//注意点： s_saiRxIsr，SAI_TransferRxHandleIRQ, rx_callback
+
+
+------------------------------------------------------------------------------
+
+main()
+
+    while(1) 
+
+        //receive the iis data to buf
+--        if (emptyBlock > 0)
+
+--            xfer.data     = Buffer + rx_index * BUFFER_SIZE;
+--            xfer.dataSize = BUFFER_SIZE;
+
+            //把新的数组，放到接收数据的地方; RCSR.8,10=1,1，使能error中断,使能FIFI请求中断，开启接收
+--            if (kStatus_Success == SAI_TransferReceiveNonBlocking(DEMO_SAI, &rxHandle, &xfer))
+--                rx_index++;
+           
+--            if (rx_index == BUFFER_NUMBER)
+--                rx_index = 0;      
+
+
+
+
+
+
+
+
+
+==============================参考==============================
+
+参数：dmaTxHandle， config
+EDMA_SubmitTransfer(  *handle,   *config)
+
+    *tcdRegs =DMA0->TCD[dmaTxHandle->channel]=TCD[0];
+
+    if (dmaTxHandle->tcdPool == NULL)
+ 
+        if (  
+              (  ( TCD[0].CSR & 1<<6 ) != 0  ) ||                                                                             //ACTIVE
+              (  (  TCD[0].CITER_ELINKNO & 0X7FFF) !=  ( TCD[0].BITER_ELINKNO &  0X7FFF)    )   // ELINKNO_CITER, ELINKNO_BITER
+           )
+         
+            return kStatus_EDMA_Busy;
+        
+        else
+         
+            EDMA_SetTransferConfig(handle->base, handle->channel, config, NULL);
+            /* Enable auto disable request feature */
+            handle->base->TCD[handle->channel].CSR |= DMA_CSR_DREQ_MASK;
+
+            /* Enable major interrupt */
+            handle->base->TCD[handle->channel].CSR |= DMA_CSR_INTMAJOR_MASK;
+
+            return kStatus_Success;
+
+
+
+
+
+
+

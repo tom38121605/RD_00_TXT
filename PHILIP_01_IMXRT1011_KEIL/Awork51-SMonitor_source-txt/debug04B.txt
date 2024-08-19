@@ -1,0 +1,42 @@
+
+
+
+typedef struct _gpio_pin_config
+{
+    gpio_pin_direction_t        direction;  
+    uint8_t                            outputLogic;          
+    gpio_interrupt_mode_t    interruptMode;  
+} gpio_pin_config_t;
+
+
+#define IOMUXC_GPIO_SD_05_GPIO2_IO05 0x401F8070U, 0x5U, 0, 0, 0x401F8120U
+
+#define EXAMPLE_SW_IRQ          BOARD_USER_BUTTON_IRQ
+#define BOARD_USER_BUTTON_IRQ         GPIO2_Combined_0_15_IRQn
+
+ NotAvail_IRQn                = -128,     
+GPIO2_Combined_0_15_IRQn     = 72,     //P2口的GPIO0 - GPIO15
+
+#ifndef BOARD_USER_BUTTON_GPIO_PIN
+#define BOARD_USER_BUTTON_GPIO_PIN (5U)
+
+
+kCLOCK_Gpio2       = (0U << 8U) | CCM_CCGR0_CG15_SHIFT,    /*!< CCGR0, CG15  */
+
+
+#define BOARD_USER_BUTTON_IRQ         GPIO2_Combined_0_15_IRQn
+#define BOARD_USER_BUTTON_IRQ_HANDLER GPIO2_Combined_0_15_IRQHandler
+#define BOARD_USER_BUTTON_NAME        "SW4"
+
+
+typedef enum IRQn 
+{
+   。。。
+
+  GPIO1_Combined_0_15_IRQn     = 70,               /**< Combined interrupt indication for GPIO1 signal 0 throughout 15 */
+  GPIO1_Combined_16_31_IRQn    = 71,               /**< Combined interrupt indication for GPIO1 signal 16 throughout 31 */
+  GPIO2_Combined_0_15_IRQn     = 72,               /**< Combined interrupt indication for GPIO2 signal 0 throughout 15 */
+
+   。。。
+
+} IRQn_Type;

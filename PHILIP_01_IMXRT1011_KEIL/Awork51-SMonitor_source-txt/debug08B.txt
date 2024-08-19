@@ -1,0 +1,246 @@
+﻿
+#define DEMO_CODEC_WM8960
+#define DEMO_SAI                       SAI1
+#define DEMO_SAI_CHANNEL               (0)
+#define DEMO_SAI_IRQ                   SAI1_IRQn
+#define DEMO_SAITxIRQHandler           SAI1_IRQHandler
+#define DEMO_SAI_TX_SYNC_MODE          kSAI_ModeAsync
+#define DEMO_SAI_RX_SYNC_MODE          kSAI_ModeSync
+#define DEMO_SAI_TX_BIT_CLOCK_POLARITY kSAI_PolarityActiveLow
+#define DEMO_SAI_MCLK_OUTPUT           true
+#define DEMO_SAI_MASTER_SLAVE          kSAI_Slave
+
+#define DEMO_AUDIO_DATA_CHANNEL (2U)
+#define DEMO_AUDIO_BIT_WIDTH    kSAI_WordWidth16bits
+#define DEMO_AUDIO_SAMPLE_RATE  (kSAI_SampleRate16KHz)
+#define DEMO_AUDIO_MASTER_CLOCK DEMO_SAI_CLK_FREQ
+
+
+----------
+
+/* DMA */
+#define DEMO_DMA             DMA0
+#define DEMO_DMAMUX          DMAMUX
+#define DEMO_TX_EDMA_CHANNEL (0U)
+#define DEMO_RX_EDMA_CHANNEL (1U)
+#define DEMO_SAI_TX_SOURCE   kDmaRequestMuxSai1Tx      //19
+#define DEMO_SAI_RX_SOURCE   kDmaRequestMuxSai1Rx      //20
+
+---
+#define DMA0_BASE                                (0x400E8000u)
+#define DMA0                                         ((DMA_Type *)DMA0_BASE)
+
+#define DMAMUX_BASE                              (0x400EC000u)
+#define DMAMUX                                       ((DMAMUX_Type *)DMAMUX_BASE)
+
+#define DMA_BASE_PTRS                             { DMA0 }
+
+typedef enum _dma_request_source
+    kDmaRequestMuxSai1Rx            = 19|0x100U,   
+    kDmaRequestMuxSai1Tx            = 20|0x100U,   
+    kDmaRequestMuxSai3Rx            = 83|0x100U, 
+    kDmaRequestMuxSai3Tx            = 84|0x100U,   
+
+#define FSL_FEATURE_DMAMUX_MODULE_CHANNEL (16)
+#define DMAMUX_CHCFG_ENBL_MASK                   (0x80000000U)
+#define DMAMUX_CHCFG_ENBL_SHIFT                  (31U)
+
+
+
+--------------------------
+
+typedef struct _edma_config
+{
+    bool enableContinuousLinkMode;   
+    bool enableHaltOnError;        
+    bool enableRoundRobinArbitration;  
+    bool enableDebugMode; 
+} edma_config_t;
+
+#define DMA_CR_ERCA_MASK                         (0x4U)
+#define DMA_CR_ERCA_SHIFT                        (2U)
+
+#define DMA_CR_HOE_MASK                          (0x10U)
+#define DMA_CR_HOE_SHIFT                         (4U)
+
+#define DMA_CR_CLM_MASK                          (0x40U)
+#define DMA_CR_CLM_SHIFT                         (6U)
+
+#define DMA_CR_EDBG_MASK                         (0x2U)
+#define DMA_CR_EDBG_SHIFT                        (1U)
+
+----------------------
+
+
+#define STCD_ADDR( address )       (edma_tcd_t *)   (  (  address  + 32 ) & ~0x1F   )
+
+
+typedef struct _edma_tcd     //dma的tcd相关寄存器地址
+{
+    __IO uint32_t    SADDR;     
+    __IO uint16_t    SOFF;     
+    __IO uint16_t    ATTR;      
+    __IO uint32_t    NBYTES;    
+    __IO uint32_t    SLAST;     
+    __IO uint32_t    DADDR;    
+    __IO uint16_t    DOFF;    
+    __IO uint16_t    CITER;     
+    __IO uint32_t    DLAST_SGA;  
+    __IO uint16_t    CSR;     
+    __IO uint16_t    BITER;     
+} edma_tcd_t;
+
+---
+
+typedef struct     _edma_handle
+{
+    edma_callback    callback; 
+    void                    *userData;         
+    DMA_Type          *base;         
+    edma_tcd_t         *tcdPool;    
+
+    uint8_t                 channel;        
+    volatile                 int8_t header;  
+    volatile                 int8_t tail;   
+    volatile                 int8_t tcdUsed;  
+
+    volatile int8_t       tcdSize;  
+    uint8_t flags;          
+
+} edma_handle_t;
+
+
+=========================
+
+
+#define   SAI_XFER_QUEUE_SIZE       (4 )
+
+typedef struct sai_edma_handle     sai_edma_handle_t;
+struct sai_edma_handle
+{
+    edma_handle_t   *dmaHandle;     
+    uint8_t                nbytes;               
+    uint8_t                bytesPerFrame;       
+    uint8_t                channelMask;        
+    uint8_t                channelNums;         
+    uint8_t                channel;             
+    uint8_t                count;              
+    uint32_t               state;           
+
+    sai_edma_callback_t        callback; 
+    void                                *userData;          
+    uint8_t                            tcd[(4 + 1) * sizeof(edma_tcd_t)];  
+    sai_transfer_t                   saiQueue[4];         
+    size_t                              transferSize[4];                
+    volatile uint8_t                queueUser;                               
+    volatile uint8_t                queueDriver;  
+};
+
+----------
+
+
+typedef struct sai_edma_private_handle
+{
+    I2S_Type                    *base;
+    sai_edma_handle_t     *handle;
+} sai_edma_private_handle_t;
+
+
+#define I2S_BASE_PTRS    {  0 , SAI1, 0 , SAI3 }
+static I2S_Type *const      s_saiBases[] = I2S_BASE_PTRS; 
+
+//static sai_edma_private_handle_t        s_edmaPrivateHandle[ARRAY_SIZE(s_saiBases)][2];
+     static sai_edma_private_handle_t      s_edmaPrivateHandle[4][2];
+
+
+==============================
+
+static const IRQn_Type     s_edmaIRQNumber[ ][16] = DMA_CHN_IRQS;
+
+
+#define DMA_CHN_IRQS                             
+{ 
+{ DMA0_IRQn, DMA1_IRQn, DMA2_IRQn, DMA3_IRQn, 
+  DMA4_IRQn, DMA5_IRQn, DMA6_IRQn, DMA7_IRQn, 
+  DMA8_IRQn, DMA9_IRQn, DMA10_IRQn, DMA11_IRQn, 
+  DMA12_IRQn, DMA13_IRQn, DMA14_IRQn, DMA15_IRQn 
+}
+
+ }
+
+#define DMA_ERROR_IRQS                          { DMA_ERROR_IRQn }
+ 
+
+=====================
+
+typedef enum _edma_transfer_size
+{
+    kEDMA_TransferSize1Bytes  = 0x0U,            /*!< Source/Destination data transfer size is 1 byte every time */
+    kEDMA_TransferSize2Bytes  = 0x1U,            /*!< Source/Destination data transfer size is 2 bytes every time */
+    kEDMA_TransferSize4Bytes  = 0x2U,            /*!< Source/Destination data transfer size is 4 bytes every time */
+    kEDMA_TransferSize8Bytes  = 0x3U,            /*!< Source/Destination data transfer size is 8 bytes every time */
+    kEDMA_TransferSize16Bytes = 0x4U,           /*!< Source/Destination data transfer size is 16 bytes every time */
+    kEDMA_TransferSize32Bytes = 0x5U,           /*!< Source/Destination data transfer size is 32 bytes every time */
+} edma_transfer_size_t;
+
+
+typedef struct _edma_transfer_config
+{
+    uint32_t srcAddr;                  
+    uint32_t destAddr;               
+    edma_transfer_size_t srcTransferSize; 
+    edma_transfer_size_t destTransferSize;  
+    int16_t srcOffset;                  
+    int16_t destOffset;                 
+
+    uint32_t minorLoopBytes;             
+    uint32_t majorLoopCounts;           
+} edma_transfer_config_t;
+
+
+---
+
+
+typedef struct     _edma_handle
+    edma_tcd_t         *tcdPool;    
+
+
+struct sai_edma_handle
+    uint8_t                            tcd[ 5 * 0x100]={0};     //当结构体一定义，这个tcd的地址就是固定的了，可以直接拿来使用
+ 
+
+
+STCD_ADDR(.tcd)  = STCD_ADDR( &tcd[0] )
+
+//#define STCD_ADDR(address) (edma_tcd_t *)((address + 32UL) & ~0x1FU)
+//     STCD_ADDR(address)   =     (&tcd[0]  + 0x100 ) & ~0x1F 
+     STCD_ADDR(address)   =     ( tcd  + 0x100 ) & ~0x1F    //举例：STCD_ADDR(0x1234)  = 0x1300 待理解
+  
+
+=====================
+
+#define DMA_ATTR_SSIZE_MASK                      (0x700U)
+#define DMA_ATTR_SSIZE_SHIFT                     (8U)
+
+#define DMA_ATTR_SSIZE(x)          (   x << 8  ) & 0x700    //bit10-8=x
+
+
+typedef void (*sai_edma_callback_t) ( I2S_Type *base,  sai_edma_handle_t *handle,  status_t status,  void *userData);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

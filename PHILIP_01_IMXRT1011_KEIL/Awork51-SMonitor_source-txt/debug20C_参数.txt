@@ -1,0 +1,342 @@
+﻿
+
+#define FLEXIO_UART_TX_PIN 21U    //AD9
+#define FLEXIO_UART_RX_PIN 22U    //AD10
+
+
+==============================uart的配置参数========================================
+
+    //取得uart的配置参数
+    FLEXIO_UART_GetDefaultConfig(flexio_uart_config_t *userConfig)
+ 
+       memset(userConfig, 0, all);
+
+       userConfig->enableUart       = true;    //1<<0        (CTRL.0)
+        userConfig->enableInDoze     = false;   //0<<31    (CTRL.31, 这一位特殊false要置1)
+        userConfig->enableInDebug    = true;    //1<<30    (CTRL.30)
+        userConfig->enableFastAccess = false;   //0<<2      (CTRL.2)
+ 
+        userConfig->baudRate_Bps = 115200; 
+        userConfig->bitCountPerChar = kFLEXIO_UART_8BitsPerChar;  //8
+
+
+==============================timer01 和 shift01的参数====================================
+
+    main()
+    
+       //uart设备参数赋值
+       uartDev.flexioBase      = BOARD_FLEXIO_BASE;        //FLEXIO1
+       uartDev.TxPinIndex      = FLEXIO_UART_TX_PIN;      //21
+       uartDev.RxPinIndex      = FLEXIO_UART_RX_PIN;      //22
+       uartDev.shifterIndex[0] = 0;
+       uartDev.shifterIndex[1] = 1;
+       uartDev.timerIndex[0]   = 0;
+       uartDev.timerIndex[1]   = 1;
+
+
+－－－－－－－
+
+FLEXIO_UART_Init(  *base,   *userConfig, srcClock_Hz)
+
+    //1.把shifter 0 配置为 tx 的参数赋值 
+    //SHIFTCTL0
+    shifterConfig.timerSelect   = base->timerIndex[0];                                 //* 0  SHIFTCTL0.26-24=0,  选择timer0作为时钟
+    shifterConfig.timerPolarity = kFLEXIO_ShifterTimerPolarityOnPositive;    //* 0  SHIFTCTL0.23=0,   在时钟的上升沿移位
+    shifterConfig.pinConfig     = kFLEXIO_PinConfigOutput;                        //* 3 SHIFTCTL0.17-16= 3 ，设置引脚为output
+    shifterConfig.pinSelect     = base->TxPinIndex;                                      //* 21 SHIFTCTL0.12-8= 21 ,  选择引脚为21
+    shifterConfig.pinPolarity   = kFLEXIO_PinActiveHigh;                    // 0   SHIFTCTL0.7 = 0 ，引脚active时为低电平
+    shifterConfig.shifterMode   = kFLEXIO_ShifterModeTransmit;       //* 2  SHIFTCTL0.2-0 = 2 ，发送模式，数据从SHIFTBUF -> pin
+
+    //SHIFTCFG0
+    shifterConfig.inputSource   = kFLEXIO_ShifterInputFromPin;        // 0   SHIFTCFG0.8=0 ，设置引脚为input source 待理解  
+    shifterConfig.shifterStop   = kFLEXIO_ShifterStopBitHigh;             // 3   SHIFTCFG0.5-4=3 ,   停止位为1
+    shifterConfig.shifterStart  = kFLEXIO_ShifterStartBitLow;               // 2   SHIFTCFG0.1-0=2 ,   起始位为0
+
+    //memset(shifterConfig,0,all)
+        shifterConfig.parallelWidth=0                                                  // SHIFTCFG0.20-16=0 ，  一个clk移动1位
+
+    //3.配置rx的 shifter 1 的参数赋值
+    //SHIFTCTL1
+    shifterConfig.timerSelect   = base->timerIndex[1];                                  //* 1    SHIFTCTL1.26-24=1,  选择timer1作为时钟
+    shifterConfig.timerPolarity = kFLEXIO_ShifterTimerPolarityOnNegitive;    //* 1    SHIFTCTL1.23=1,     在时钟的下降沿移位
+    shifterConfig.pinConfig     = kFLEXIO_PinConfigOutputDisabled;             //* 0   SHIFTCTL1.17-16= 0 ,不使能output
+    shifterConfig.pinSelect     = base->RxPinIndex;                                       //* 22  SHIFTCTL1.12-8= 22 ，选择引脚为22
+    shifterConfig.pinPolarity   = kFLEXIO_PinActiveHigh;                  // 0 SHIFTCTL1.7 = 0，引脚active时为低电平
+    shifterConfig.shifterMode   = kFLEXIO_ShifterModeReceive;       //* 1  SHIFTCTL1.2-0 = 1 ，接收模式，数据从 pin -> SHIFTBUF
+
+    //SHIFTCFG1
+    shifterConfig.inputSource   = kFLEXIO_ShifterInputFromPin;;       // 0   SHIFTCFG1.8=0 ，设置引脚为input source 待理解  
+    shifterConfig.shifterStop   = kFLEXIO_ShifterStopBitHigh;            // 3   SHIFTCFG1.5-4=3 ,   停止位为1
+    shifterConfig.shifterStart  = kFLEXIO_ShifterStartBitLow;              // 2    SHIFTCFG1.1-0=2 ,   起始位为0
+
+    //memset(shifterConfig,0,all)
+        shifterConfig.parallelWidth=0                                                // SHIFTCFG1.20-16=0 ，  一个clk移动1位
+
+
+    //2. 设置tx的 timer 0 的参数赋值
+    //TIMCTL0
+    timerConfig.triggerSelect   = FLEXIO_TIMER_TRIGGER_SEL_SHIFTnSTAT(0);    //* ( 0 << 2) | 0x1=1, TIMCTL0.29-24=1，triggre 选择为 "shifter0 flag"   待理解
+    timerConfig.triggerPolarity = kFLEXIO_TimerTriggerPolarityActiveLow;           //* 1 TIMCTL0.23=1, triggler active low
+    timerConfig.triggerSource   = kFLEXIO_TimerTriggerSourceInternal;              //* 1 TIMCTL0.22=1, 选择 internal trigger  待理解
+    timerConfig.pinConfig       = kFLEXIO_PinConfigOutputDisabled;                  // 0  TIMCTL0.17-16=0, timer引脚不输出
+    timerConfig.pinSelect       = base->TxPinIndex;                                             //* 21 TIMCTL0.12-8=21, 选择timer pin为21
+    timerConfig.pinPolarity     = kFLEXIO_PinActiveHigh;                                      //* 0 TIMCTL0.7=0, timer pin active 为high
+    timerConfig.timerMode       = kFLEXIO_TimerModeDual8BitBaudBit;                // 1 TIMCTL0.1-0=1， 双8位计数器波特率模式  待理解
+
+    //TIMCFG0
+    timerConfig.timerOutput     = kFLEXIO_TimerOutputOneNotAffectedByReset;                // 0  TIMCFG0.25-24=0, timer输出为逻辑1    待理解
+    timerConfig.timerDecrement = kFLEXIO_TimerDecSrcOnFlexIOClockShiftTimerOutput;  // 0  TIMCFG0.21-20=0,设置Timer decrement 和shift clock的时钟源待~
+    timerConfig.timerReset      = kFLEXIO_TimerResetNever;                                                 // *0 TIMCFG0.18-16=0, timer计数器从不reset   
+    timerConfig.timerDisable    = kFLEXIO_TimerDisableOnTimerCompare;            // 2  TIMCFG0.14-12=2, 在定时器比较时禁用 timer  待理解
+    timerConfig.timerEnable     = kFLEXIO_TimerEnableOnTriggerHigh;                 //* 2 TIMCFG0.10-8=2, 在trigger high时，enable timer
+    timerConfig.timerStop       = kFLEXIO_TimerStopBitEnableOnTimerDisable;      // 2  TIMCFG0.5-4=2, 在timer disable时，发出stop位
+    timerConfig.timerStart      = kFLEXIO_TimerStartBitEnabled;                             // 1  TIMCFG0.1=1,  使能start bit
+
+
+    // 4. .配置rx的timer 1 的参数赋值 
+    //TIMCTL1
+    timerConfig.triggerSelect   = FLEXIO_TIMER_TRIGGER_SEL_PININPUT(22);     //* 22<<1, TIMCTL1.29-24=22*2，triggre 选择为 P22   待理解
+    timerConfig.triggerPolarity = kFLEXIO_TimerTriggerPolarityActiveHigh;         //* 0 TIMCTL1.23=0, triggler active high
+    timerConfig.triggerSource   = kFLEXIO_TimerTriggerSourceExternal;            //* 0 TIMCTL1.22=0, 选择externql trigger    待理解
+    timerConfig.pinConfig       = kFLEXIO_PinConfigOutputDisabled;                 // 0 TIMCTL1.17-16=0, timer引脚不输出
+    timerConfig.pinSelect       = base->RxPinIndex;                                           // 22  TIMCTL1.12-8=22, 选择timer pin为22
+    timerConfig.pinPolarity     = kFLEXIO_PinActiveLow;                                    //* 1 TIMCTL1.7=1, timer pin active 为low
+    timerConfig.timerMode       = kFLEXIO_TimerModeDual8BitBaudBit;            // 1  TIMCTL1.1-0=1， 双8位计数器波特率模式  待理解
+
+    //TIMCFG1
+    timerConfig.timerOutput     = kFLEXIO_TimerOutputOneAffectedByReset;                        //* 2 TIMCFG1.25-24=2, timer输出为逻辑1,并且on timer reset 待~
+    timerConfig.timerDecrement  = kFLEXIO_TimerDecSrcOnFlexIOClockShiftTimerOutput;    // 0  TIMCFG1.21-20=0,设置Timer decrement 和shift clock时钟源待~
+    timerConfig.timerReset      = kFLEXIO_TimerResetOnTimerPinRisingEdge;                         //* 4 TIMCFG1.18-16=4, timer计数器在pin的上升沿时reset   
+    timerConfig.timerDisable    = kFLEXIO_TimerDisableOnTimerCompare;             // 2   TIMCFG1.14-12=2, 在定时器比较时禁用 timer  待理解
+    timerConfig.timerEnable     = kFLEXIO_TimerEnableOnPinRisingEdge;               //* 4 TIMCFG1.10-8=4, 在pin上升沿时，enable timer
+    timerConfig.timerStop       = kFLEXIO_TimerStopBitEnableOnTimerDisable;       // 2  TIMCFG1.5-4=2, 在timer disable时，发出stop位
+    timerConfig.timerStart      = kFLEXIO_TimerStartBitEnabled;                              // 1  TIMCFG1.1=1,  使能start bit
+
+
+
+---------------------------------
+
+   //FLEXIO_UART_TransferCreateHandle(&uartDev, &g_uartHandle, FLEXIO_UART_UserCallback, NULL);
+        memset(g_uartHandle, 0, all); 
+        g_uartHandle->rxState = kFLEXIO_UART_RxIdle;    //2
+        g_uartHandle->txState = kFLEXIO_UART_TxIdle;    //0
+        g_uartHandle->callback = callback;
+        g_uartHandle->userData = userData;
+
+
+
+====================================g_uartHandle  的参数===============================
+
+
+
+//设置flexio uart的handle参数部分一,  使能flexio1的irq(flexio总中断)，把handle保存到全局变量
+FLEXIO_UART_TransferCreateHandle(  *base,           // uartDev 
+                                                          *handle,       // g_uartHandle
+                                                           callback,      // FLEXIO_UART_UserCallback()
+                                                           *userData)   // NULL
+
+    memset(handle, 0, all);
+ 
+    handle->rxState = kFLEXIO_UART_RxIdle;  //2
+    handle->txState = kFLEXIO_UART_TxIdle;  //0
+ 
+    handle->callback = callback;
+    handle->userData = userData;
+
+
+---
+
+
+//把flexio的handle等，保存到全局变量
+FLEXIO_RegisterHandleIRQ(  *base,          // uartDev 
+                                            *handle,       // g_uartHandle
+                                             isr)              //FLEXIO_UART_TransferHandleIRQ()
+
+    //把把flexio的handle，保存到全局变量数组的空的位置中
+    for (index = 0; index <  2;  index++)  //FLEXIO_HANDLE_COUNT=2
+ 
+        if (s_flexioHandle[index] == NULL)   //index=0时满足条件
+ 
+             s_flexioType[0]   = base;          // uartDev 
+             s_flexioHandle[0] = handle;     // g_uartHandle
+             s_flexioIsr[0]    = isr;                // FLEXIO_UART_TransferHandleIRQ()
+             break;
+
+
+
+
+==================================== irq 中断的参数===============================
+
+
+//  使能flexio1的irq(flexio总中断) 
+FLEXIO_UART_TransferCreateHandle(  *base,           // uartDev 
+                                                          *handle,       // g_uartHandle
+                                                           callback,      // FLEXIO_UART_UserCallback()
+                                                           *userData)   // NULL
+
+    //清除flexio1的irq标志
+    //NVIC_ClearPendingIRQ(flexio_irqs[FLEXIO_UART_GetInstance(base)]);
+           NVIC->ICPR[ 2 ] =  1  << ( 68  & 0x1F ) ;
+
+
+    //使能flexio1的irq
+    //EnableIRQ(flexio_irqs[FLEXIO_UART_GetInstance(base)]);
+              NVIC->ISER[2] = 1  << ( 68  & 0x1F ) ; 
+
+
+------
+
+
+//把flexio的irq处理函数等，保存到全局变量
+FLEXIO_RegisterHandleIRQ(  *base,          // uartDev 
+                                            *handle,       // g_uartHandle
+                                             isr)              //FLEXIO_UART_TransferHandleIRQ()
+
+    //把把flexio的handle，保存到全局变量数组的空的位置中
+    for (index = 0; index <  2;  index++)  //FLEXIO_HANDLE_COUNT=2
+ 
+        if (s_flexioHandle[index] == NULL)   //index=0时满足条件
+ 
+             s_flexioType[0]   = base;          // uartDev 
+             s_flexioHandle[0] = handle;     // g_uartHandle
+             s_flexioIsr[0]    = isr;                // FLEXIO_UART_TransferHandleIRQ()
+             break;
+
+
+---
+
+// 使能flexio shift0的中断  (tx子中断) 
+ FLEXIO_UART_TransferSendNonBlocking(   *base,           //uartDev
+                                                                    *handle,        //g_uartHandle
+                                                                     *xfer)           //xfer
+
+     //使能FLEXIO SHIFT0的中断(tx子中断) 
+     FLEXIO_UART_EnableInterrupts(base, 1 );                   
+            SHIFTSIEN.0=1;  使能FLEXIO SHIFT0的中断
+
+
+----------
+
+// 使能flexio shift1的中断 (rx子中断)
+FLEXIO_UART_TransferReceiveNonBlocking(     *base,                   // uartDev
+                                                                        *handle,               // g_uartHandle
+                                                                        *xfer,                    // receiveXfer
+                                                                        *receivedBytes)     // NULL
+ 
+        //使能 RX interrupt 
+        //FLEXIO_UART_EnableInterrupts(base,2);
+               SHIFTSIEN.1=1;  使能FLEXIO SHIFT1的中断
+
+
+
+---
+
+// rx和tx的中断服务函数
+FLEXIO_UART_TransferHandleIRQ(   *uartType,          //uartDev ?
+                                                       *uartHandle)      //g_uartHandle?
+ 
+                //不使能flexio的tx 的子中断
+                //FLEXIO_UART_DisableInterrupts(base, 1);
+                      SHIFTSIEN &= ~(1<<0);    //SHIFTSIEN.0=0  不使能
+
+
+        //不使能flexio的rx 的子中断
+        else if (0 == handle->rxDataSize) 
+    
+            //FLEXIO_UART_DisableInterrupts(base,  2);
+                 SHIFTSIEN &= ~(1<<1);    //SHIFTSIEN.1=0  不使能
+
+
+---
+
+
+//使能FLEXIO SHIFT的中断(子中断)，使能shift0的中断(tx)
+FLEXIO_UART_EnableInterrupts(    *base,      // uartDev
+                                                     mask)      // 1,  Tx Empty Enable
+ 
+    if ((mask & 1) != 0)  //tx 
+
+        //FLEXIO_EnableShifterStatusInterrupts( FLEXIO1, 1 << 0 );
+                 FLEXIO1->SHIFTSIEN |= 1 << 0;
+ 
+    if ((mask & 2) != 0)  //rx 
+        FLEXIO_EnableShifterStatusInterrupts( FLEXIO1, 1 << 1  );
+
+
+---
+
+
+//不使能flexio的tx，rx的子中断
+FLEXIO_UART_DisableInterrupts(  *base,   mask)      // uartDev, 1 
+ 
+    if ((mask & 1) != 0 )    
+        //FLEXIO_DisableShifterStatusInterrupts(base->flexioBase, 1  << base->shifterIndex[0]);
+                  SHIFTSIEN &= ~(1<<0);
+    
+    if ((mask &2) != 0 )    
+        //FLEXIO_DisableShifterStatusInterrupts(base->flexioBase, 1 << base->shifterIndex[1]);
+                  SHIFTSIEN &= ~(1<<1);
+ 
+
+
+==============================状态参数========================================
+
+说明1：当shift0刚初始化为输出时，statu.0被自动置1，发送完成后也置1  （刚发送时置0）
+说明2：当shift1刚初始化为输入时，statu.1被自动置0，接收满一个字节后置1 ，读取字节后又置0
+
+FLEXIO_GetShifterStatusFlags(base->flexioBase);
+
+      state=   SHIFTSTAT  & 0xff ;   //SHIFTSTAT.7-0
+
+
+----------
+
+//读取状态SHIFTSTAT.0,1  SHIFTERR.1 ,保存在status.0,,1,2中
+ FLEXIO_UART_GetStatusFlags(  *base)       //uartDev 
+
+   AAA= FLEXIO_GetShifterStatusFlags(FLEXIO1) 
+          =  FLEXIO1->SHIFTSTAT  & 0xFF  ;    
+ 
+   BBB= FLEXIO_GetShifterErrorFlags(FLEXIO1) 
+          =   FLEXIO1->SHIFTERR  & 0xFF;
+
+    status.0 = SHIFTSTAT.0;
+    status.1 = SHIFTSTAT.1;
+    status.2 = SHIFTERR.1;
+
+
+---
+
+//清除flexio的irq状态标志
+FLEXIO_UART_ClearStatusFlags(  *base,  mask)
+ 
+    if ((mask &  1) != 0)   //tx irq in
+        FLEXIO_ClearShifterStatusFlags(SHIFTSTAT, 1  << 0);   //SHIFTSTAT.0=1  ,写1清标志为0
+ 
+    if ((mask & 2) != 0)   //rx irq in
+        FLEXIO_ClearShifterStatusFlags(SHIFTSTAT, 1  << 1);  //SHIFTSTAT.1=1  ,写1清标志为0
+ 
+    if ((mask &  4) != 0)   //err irq in
+        FLEXIO_ClearShifterErrorFlags(SHIFTERR, 1  << 1);      //SHIFTERR.1=1  ,写1清标志为0
+
+
+
+------
+
+// rx和tx的中断服务函数
+FLEXIO_UART_TransferHandleIRQ(   *uartType,          //uartDev ?
+                                                       *uartHandle)      //g_uartHandle?
+ 
+                  ......
+
+    //如果有 RX overrun的err状态标志
+    if ((  4 & status) != 0 )   //如果status.2=1，则表示有err标志
+ 
+        //在SHIFTERR.1写入1，来清除err状态标志
+        FLEXIO_UART_ClearStatusFlags(base, 4);
+             SHIFTERR=1<<1;
+
+
+
+
+

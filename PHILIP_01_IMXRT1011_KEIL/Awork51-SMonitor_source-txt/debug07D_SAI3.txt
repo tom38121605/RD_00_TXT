@@ -1,0 +1,202 @@
+﻿
+ 
+=====================IIS 输入读取流程======SAI3========================
+
+rx flow：
+
+main --> SAI_TransferReceiveNonBlocking --> (xfer) -->  rxHandle3 
+
+         --> SAI3_RX_DriverIRQHandler--> ( rxHandle3 ) -->   SAI1_TransferRxHandleIRQ --> SAI_ReadNonBlocking    
+                --> （ saiHandle[3][1] ）  --> rx_callback3
+
+考虑修改如下新流程（必看）：
+       --> SAI3_RX_DriverIRQHandler--> ( rxHandle3 ) -->   SAI3_TransferRxHandleIRQ --> SAI_ReadNonBlocking  
+                --> （ saiHandle[3][1] ）  --> rx_callback3
+
+
+注意点：SAI3_RX_DriverIRQHandler， s_saiRxIsr3，SAI3_TransferRxHandleIRQ,  saiHandle[3][1]，rx_callback3
+
+
+------------------------------------------------------------------------------
+
+void SAI3_RX_DriverIRQHandler(void)
+{
+    assert(s_saiHandle[3][1] != NULL);
+    s_saiRxIsr(SAI3, s_saiHandle[3][1]);
+    //s_saiRxIsr3(SAI3, s_saiHandle[3][1]);   //new  (wait to chg)
+
+    SDK_ISR_EXIT_BARRIER;
+}
+
+
+------------------------------------------------
+
+
+main()
+
+    while(1) 
+
+        //receive the iis data to buf
+        if (emptyBlock > 0)
+
+            xfer.data     = Buffer + rx_index * BUFFER_SIZE;
+            xfer.dataSize = BUFFER_SIZE;
+
+            //把新的数组，放到接收数据的地方; RCSR.8,10=1,1，使能error中断,使能FIFI请求中断 //使能receiver (如同步模式先使能 Transmitter)
+            if (kStatus_Success == SAI_TransferReceiveNonBlocking(SAI3, &rxHandle3, &xfer))
+                rx_index++;
+           
+            if (rx_index == BUFFER_NUMBER)
+                rx_index = 0;      
+
+
+------------------------------------------------------
+
+参考：RCSR P1061 
+//把新的数组，放到接收数据的地方; RCSR.8,10=1,1，使能error中断,使能FIFI请求中断 //使能receiver (如同步模式先使能 Transmitter)
+输入参数：SAI3, rxHandle3, xfer
+输出：   rxHandle3，开rx中断，使能rx
+SAI_TransferReceiveNonBlocking( *base, *handle,  *xfer)
+ 
+    assert( handle != NULL );
+    assert( handle->channelNums <=  FSL_FEATURE_SAI_CHANNEL_COUNTn(base) );
+
+    //检查下一个队列数组是否为空，如果有数据，则已读满  --easy
+    if (handle->saiQueue[handle->queueUser].data != NULL)
+        return kStatus_SAI_QueueFull;
+
+    //把新的数组，放到接收数据的地方
+    handle->saiQueue[handle->queueUser].data     = xfer->data;
+    handle->saiQueue[handle->queueUser].dataSize = xfer->dataSize;
+    handle->queueUser                            = (handle->queueUser + 1) %  4;
+
+    handle->state = kSAI_Busy;
+
+    //RCSR.10,8=11 使能error中断，使能FIFI请求中断 
+    SAI_RxEnableInterrupts(base, I2S_TCSR_FEIE_MASK | I2S_TCSR_FRIE_MASK);  
+        RCSR.10,8=11;  
+
+     //判断是否是同步模式，如果是同步模式先使能 Transmitter，使能receiver
+    //SAI_RxEnable(base, true);
+         if(base->RCR2.31-30=01)   //判断是否为同步模式
+             base->TCSR.31=1;    //使能 Transmitter
+         base->RCSR.31=1;       //使能receiver
+
+
+
+-------------------------------------------------------
+
+
+//通过iis的rx中断接收数据  
+//输入参数：SAI3, rxHandle3
+//输出：RDR[0]  每次接收4个字节，两个声道一次接收8个字节
+SAI3_TransferRxHandleIRQ(I2S_Type *base, sai_handle_t *handle)
+
+    flg_sai3_rx=1;   
+
+    uint8_t *buffer   = handle->saiQueue[handle->queueDriver].data;
+    uint32_t dataSize = (handle->bitWidth / 8UL) * handle->channelNums;
+
+
+    //fifo 错误中断出来
+       （略）
+ 
+ 
+    //如果有接收请求中断标志RCSR.16=1, 接收IIS数据
+    if (IS_SAI_FLAG_SET(base->RCSR, I2S_RCSR_FRF_MASK))  //RCSR.16=1
+ 
+        //取下面的最小值（最大不超过128字节--水位线），作为IIS发送数量 
+        size = MIN((handle->saiQueue[handle->queueDriver].dataSize), handle->watermark * dataSize);
+
+        //Copy the data from sai buffer to FIFO  //把sai1过来size个数据，按每次4x2个字节的方式接收到数组(FIFO)
+        SAI_ReadNonBlocking(base, handle->channel, *->channelMask, *->endChannel, *->bitWidth, buffer, size);
+
+        //数组里面指针后移size个数据，用数组后面的空间来接收数据
+        handle->saiQueue[handle->queueDriver].dataSize -= size;
+        handle->saiQueue[handle->queueDriver].data =buffer + size;
+
+
+    //当接收完一个block，则清字符指针为null，把queueDriver++
+    if (handle->saiQueue[*->queueDriver].dataSize == 0)
+ 
+        memset(&handle->saiQueue[*->queueDriver], 0, all);    //这里仅把指针清空为null （num也清0），没有对IIS的字符串做任何操作
+        handle->queueDriver = (*->queueDriver + 1) % 4;
+
+        rx_callback3(base, handle, kStatus_SAI_RxIdle, handle->userData);
+ 
+    //则表示已完成接收，关闭接收功能   (只有司机没有卡车--可理解为MCU没有卡车接收了/或userindex还没来得及分配卡车--easy)
+    /* If all data finished, just stop the transfer */
+    if (handle->saiQueue[*->queueDriver].data == NULL)     //待理解 （为什么判断下一个数组指针，下一个数组指针在什么地方初始化的）
+                                                                                           //已理解, 在while循环里不断对下一数组指针进行分配(把4个数组指针都分配完)
+   
+        SAI_TransferAbortReceive(base, handle);
+ 
+ 
+
+
+
+====================参考=========================
+
+
+void SAI3_DriverIRQHandler(void)   //--nouse
+{   
+flg_sai3_rx=2;
+
+    if ((s_saiHandle[3][1] != NULL) && SAI_RxGetEnabledInterruptStatus(SAI3, (I2S_TCSR_FRIE_MASK | I2S_TCSR_FEIE_MASK),
+                                                                       (I2S_TCSR_FRF_MASK | I2S_TCSR_FEF_MASK)))
+    {
+        //s_saiRxIsr(SAI3, s_saiHandle[3][1]);
+        s_saiRxIsr3(SAI3, s_saiHandle[3][1]);    //--sai3
+    }
+}
+
+----------------
+
+
+//I2S中断入口函数 (没有这个中断入口 -- 已验证， 真正的中断入口是SAI3_RX_DriverIRQHandler)
+SAI3_DriverIRQHandler( )      //--nouse
+ 
+    //处理接收中断
+    //if (SAI_RxGetEnabledInterruptStatus(SAI3, (I2S_TCSR_FRIE_MASK | I2S_TCSR_FEIE_MASK),  
+    //                                                                (I2S_TCSR_FRF_MASK | I2S_TCSR_FEF_MASK)))
+          if(  (rcsr.8==1 | rcsr.10==1) && (rcsr.16==1 | rcsr.18==1)  )  //fifo请求或err中断使能，并且有中断标志
+
+              //s_saiRxIsr3(SAI3, s_saiHandle[3][1]);
+                   SAI3_TransferRxHandleIRQ(SAI3, rxHandle3);
+
+
+    //处理发送中断
+        (略)
+
+
+
+===========================nouse===========================================
+
+
+
+
+==========================iis使能tx中断，开启tx发送=========================
+
+
+SAI_TransferTxCreateHandle(*base,  *handle, callback,  *userData)
+
+        //使能iis的tx中断 
+        //NVIC_EnableIRQ(56);                //P40页    
+            NVIC->ISER[1] =1<< (24);       //使能iis的tx中断和rx中断
+
+------
+
+    //TCSR.8,10=1,1，使能error中断，使能FIFI请求中断
+    SAI_TxEnableInterrupts(base, I2S_TCSR_FEIE_MASK | I2S_TCSR_FRIE_MASK);    
+            base->TCSR.8,10=1,1;   
+
+    //判断是否是同步模式，如果是同步模式先使能 receiver，使能Transmitter
+    SAI_TxEnable(base, true);
+
+         if(base->TCR2.31-30=01)    //判断是否为同步模式
+             base->RCSR.31=1;         //使能 receiver 
+         base->TCSR.31=1;             //使能 Transmitter
+
+        //TCSR.18=1， 清 FIFO error flag
+        SAI_TxClearStatusFlags(base, kSAI_FIFOErrorFlag);
+             TCSR.18=1;

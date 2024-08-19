@@ -1,0 +1,44 @@
+﻿================比较dma的handle和以前的handle==============================
+
+
+struct _sai_handle       //old
+{
+    I2S_Type *base;  
+     uint8_t bitWidth;            
+     uint8_t watermark;        //水位线 （对iis每次发送数据的限制）
+
+    uint8_t                channel;             
+    uint8_t                channelMask;        
+    uint8_t                channelNums;    
+
+------
+ 
+    uint8_t endChannel;      //seems nouse
+
+    uint32_t state;     
+    sai_transfer_callback_t    callback;  
+    void *userData;                                 //这个userData在当前例子中似乎没有用到过    
+ 
+    volatile uint8_t queueUser;               
+    volatile uint8_t queueDriver;          
+
+    sai_transfer_t saiQueue[4];     
+    size_t transferSize[4];    
+
+};
+
+
+struct sai_edma_handle        //new
+{
+    edma_handle_t   *dmaHandle;     
+    uint8_t                nbytes;               
+    uint8_t                bytesPerFrame;       
+    uint8_t                tcd[(4 + 1) * sizeof(edma_tcd_t)];  
+    uint8_t                count;     
+
+------
+     （same）
+         
+};
+
+

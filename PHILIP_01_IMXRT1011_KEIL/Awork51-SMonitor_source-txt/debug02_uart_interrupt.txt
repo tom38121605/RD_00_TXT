@@ -1,0 +1,355 @@
+﻿
+
+=======================uart--初始化================================
+
+flow：
+
+--main --> BOARD_InitBootPins --> BOARD_InitPins --> CLOCK_EnableClock -->   -->  
+
+--main --> BOARD_InitBootPins --> LPUART_GetDefaultConfig -->    
+
+
+
+-------------------------------------------------------------------------------------------
+
+main()
+
+    //BOARD_InitBootPins();
+    //     BOARD_InitPins();
+
+             //CLOCK_EnableClock(kCLOCK_Iomuxc);          //设置CCGR4.3-2=3
+                  CLOCK_ControlGate(kCLOCK_Iomuxc, 3);    //设置引脚复用的时钟模式为常开（进入WAIT时也开）
+
+
+               //串口tx，rx引脚的复用设置
+               IOMUXC_SetPinMux  (IOMUXC_GPIO_09_LPUART1_RXD,   0U);    
+               IOMUXC_SetPinMux  (IOMUXC_GPIO_10_LPUART1_TXD,   0U);    
+
+               IOMUXC_SetPinConfig  (IOMUXC_GPIO_09_LPUART1_RXD,   0x10A0U);    
+               IOMUXC_SetPinConfig  (IOMUXC_GPIO_10_LPUART1_TXD,   0x10A0U);    
+ 
+
+     //uart 初始化参数，波特率，数据位，停止位，fifo水位线等
+
+     LPUART_GetDefaultConfig(&config);
+     config.baudRate_Bps = BOARD_DEBUG_UART_BAUDRATE;
+     config.enableTx     = true;
+     config.enableRx     = true;
+
+     //uart 初始化参数设置，波特率，数据位，停止位，fifo水位线等
+     LPUART_Init(LPUART1, &config, DEMO_LPUART_CLK_FREQ);
+
+
+     /* Enable RX interrupt. */
+     LPUART_EnableInterrupts( LPUART1, kLPUART_RxDataRegFullInterruptEnable);
+
+     //使能UART的tx和rx中断   
+     EnableIRQ(DEMO_LPUART_IRQn);
+
+
+     while(1)
+
+
+
+-----
+
+LPUART_EnableInterrupts(  *base,  mask)
+ 
+    //只考虑保留下面的9种中断使能
+    mask &= kLPUART_AllInterruptEnable;
+
+    tempReg = base->BAUD;
+ 
+    tempReg |= ((mask << 8) & LPUART_BAUD_LBKDIE_MASK);
+
+    /* Clear bit 7 from mask */
+    mask &= ~kLPUART_LinBreakInterruptEnable;
+ 
+    tempReg |= ((mask << 8) & LPUART_BAUD_RXEDGIE_MASK);
+
+    /* Clear bit 6 from mask */
+    mask &= ~kLPUART_RxActiveEdgeInterruptEnable;
+    base->BAUD = tempReg;
+
+     /* Check int enable bits in base->FIFO */
+    base->FIFO = (base->FIFO & ~(LPUART_FIFO_TXOF_MASK | LPUART_FIFO_RXUF_MASK)) |
+                 (mask & (LPUART_FIFO_TXOFE_MASK | LPUART_FIFO_RXUFE_MASK));
+
+    /* Clear bit 9 and bit 8 from mask */
+    mask &= ~(kLPUART_TxFifoOverflowInterruptEnable | kLPUART_RxFifoUnderflowInterruptEnable);
+ 
+    /* Set int enable bits in base->CTRL */
+    base->CTRL |= mask;
+ 
+
+
+
+------
+
+
+    //使能UART的rx中断   
+    //EnableIRQ(LPUART1_IRQn);
+    //    NVIC_EnableIRQ(20);                //P38页       
+             NVIC->ISER[0] =1<< (20);   //使能rx中断 （也同时使能tx中断）
+
+
+----------------------
+
+
+//uart 初始化参数设置，波特率，数据位，停止位，fifo水位线等
+参数： LPUART1，config，BOARD_DebugConsoleSrcFreq
+LPUART_Init( *base,  *config, srcClock_Hz) 
+ 
+    uint32_t temp;
+    uint16_t sbr, sbrTemp;
+    uint8_t osr, osrTemp;
+    uint32_t tempDiff, calculatedBaud, baudDiff;
+
+    //循环以找到可能的最佳OSR值，即生成最小baudDiff的值 (关于波特率设置，待理解先跳过)
+
+    baudDiff = config->baudRate_Bps;
+    osr      = 0U;
+    sbr      = 0U;
+
+    for (osrTemp = 4U; osrTemp <= 32U; osrTemp++)
+
+        //计算临时 sbr 值
+        sbrTemp =  ((srcClock_Hz * 10U / (config->baudRate_Bps *  osrTemp) + 5U) / 10U);
+
+        if (sbrTemp == 0U)
+            sbrTemp = 1U;
+
+        //基于 OSR and SBR 计算串口波特率
+        calculatedBaud = (srcClock_Hz / (osrTemp * sbrTemp));
+        tempDiff       = calculatedBaud > config->baudRate_Bps ? (calculatedBaud - config->baudRate_Bps) :
+                                                           (config->baudRate_Bps - calculatedBaud);
+
+        if (tempDiff <= baudDiff)
+  
+            baudDiff = tempDiff;
+            osr      = osrTemp;  
+            sbr      = sbrTemp; 
+ 
+
+    //检查波特率配置的参数baudDiff
+    if (baudDiff > ((config->baudRate_Bps / 100) * 3))
+
+        //波特率差超过3%是不可接受的 
+        status = kStatus_LPUART_BaudrateNotSupport;
+
+    else  //开始配置uart参数
+ 
+         instance = LPUART_GetInstance(base);  //1
+
+        //使能 lpuart时钟CCM_CCGR5_CG12
+        CLOCK_EnableClock(s_lpuartClock[instance]);
+  
+        //lpuart软复位
+        //LPUART_SoftwareReset(base);
+             base->GLOBAL |= LPUART_GLOBAL_RST_MASK;       //GLOBAL.1=1
+             base->GLOBAL &= ~LPUART_GLOBAL_RST_MASK;  //GLOBAL.1=0
+
+
+        //---设置luart的波特率---
+
+        temp = base->BAUD;
+
+        if ((osr > 3) && (osr < 8))
+            temp |= (1<<17);     
+
+       //osr value 
+        temp &= ~LPUART_BAUD_OSR_MASK;
+        temp |= LPUART_BAUD_OSR(osr - 1);
+
+        //sbr value 
+        temp &= ~LPUART_BAUD_SBR_MASK;
+        base->BAUD = temp | LPUART_BAUD_SBR(sbr);
+
+
+        //---设置luart的数据位和奇偶校验模式---   //忽略，跳过
+
+        base->BAUD &= ~LPUART_BAUD_M10_MASK;
+
+        temp = base->CTRL & ~(LPUART_CTRL_PE_MASK | LPUART_CTRL_PT_MASK | LPUART_CTRL_M_MASK |                                          LPUART_CTRL_ILT_MASK |   LPUART_CTRL_IDLECFG_MASK);
+
+        temp |= (uint8_t)config->parityMode | LPUART_CTRL_IDLECFG(config->rxIdleConfig) |
+                LPUART_CTRL_ILT(config->rxIdleType);
+
+         if (kLPUART_SevenDataBits == config->dataBitsCount)
+            if (kLPUART_ParityDisabled != config->parityMode)   //忽略
+                temp &= ~LPUART_CTRL_M7_MASK; 
+            else
+                temp |= LPUART_CTRL_M7_MASK;
+        else
+            if (kLPUART_ParityDisabled != config->parityMode)   //忽略
+                temp |= LPUART_CTRL_M_MASK; 
+        base->CTRL = temp;
+
+ 
+        //---设置停止位---
+
+        temp       = base->BAUD & ~LPUART_BAUD_SBNS_MASK;
+        base->BAUD = temp | LPUART_BAUD_SBNS(config->stopBitCount);
+ 
+ 
+        //---设置tx，rx的fifo的水位线 ---     //先忽略，跳过
+
+        base->WATER = (((config->rxFifoWatermark) << 16) | config->txFifoWatermark);
+
+        //使能 tx/rx FIFO  
+        base->FIFO |= (LPUART_FIFO_TXFE_MASK | LPUART_FIFO_RXFE_MASK);
+
+        // 刷新 FIFO  
+        base->FIFO |= (LPUART_FIFO_TXFLUSH_MASK | LPUART_FIFO_RXFLUSH_MASK);
+ 
+        //清除所有中断标志
+        temp = (LPUART_STAT_RXEDGIF_MASK | LPUART_STAT_IDLE_MASK | LPUART_STAT_OR_MASK | LPUART_STAT_NF_MASK |
+                LPUART_STAT_FE_MASK | LPUART_STAT_PF_MASK);
+
+         temp |= LPUART_STAT_LBKDIF_MASK;
+
+         temp |= (LPUART_STAT_MA1F_MASK | LPUART_STAT_MA2F_MASK);
+ 
+
+         //---是否设置CTS,RTS---  //忽略跳过
+
+        base->MODIR |= LPUART_MODIR_TXCTSC(config->txCtsConfig) | LPUART_MODIR_TXCTSSRC(config->txCtsSource);
+        if (true == config->enableRxRTS)
+
+            /* Enable the receiver RTS(request-to-send) function. */
+            base->MODIR |= LPUART_MODIR_RXRTSE_MASK;
+
+        if (true == config->enableTxCTS)
+
+            /* Enable the CTS(clear-to-send) function. */
+            base->MODIR |= LPUART_MODIR_TXCTSE_MASK;
+
+ 
+        //---设置是否高位在前---
+        if (true == config->isMsb)
+            temp |= LPUART_STAT_MSBF_MASK;
+        else
+            temp &= ~LPUART_STAT_MSBF_MASK;   //STAT.29=0, 低位在前
+        base->STAT |= temp;
+
+
+        //使能TX，使能RX
+        temp = base->CTRL;
+        if (true == config->enableTx)
+            temp |= LPUART_CTRL_TE_MASK;     //CTRL.19=1, 使能tx
+
+        if (true == config->enableRx)
+            temp |= LPUART_CTRL_RE_MASK;     //CTRL.18=1, 使能rx
+
+        base->CTRL = temp;
+
+ 
+
+
+
+----------------------
+
+//uart 初始化参数
+LPUART_GetDefaultConfig( *config)  
+
+    memset(config, 0, sizeof(*config));
+
+    config->baudRate_Bps  = 115200U;
+    config->parityMode    = kLPUART_ParityDisabled;
+    config->dataBitsCount = kLPUART_EightDataBits;
+    config->isMsb         = false;
+ 
+    config->stopBitCount = kLPUART_OneStopBit;
+ 
+ 
+    config->txFifoWatermark = 0U;
+    config->rxFifoWatermark = 0U;
+ 
+    config->enableRxRTS = false;
+    config->enableTxCTS = false;
+    config->txCtsConfig = kLPUART_CtsSampleAtStart;
+    config->txCtsSource = kLPUART_CtsSourcePin;
+ 
+    config->rxIdleType   = kLPUART_IdleTypeStartBit;
+    config->rxIdleConfig = kLPUART_IdleCharacter1;
+    config->enableTx     = false;
+    config->enableRx     = false;
+ 
+
+
+-------------------
+
+ 
+ 
+//设置 UART1_RX（P1.9）为LPUART1_RXD，并关闭输入功能  P307页
+//参数：0x401F8098U, 0x0U, 0x401F81F0U, 0x1U, 0x401F8148U，   0         // 0x401F8098U  -- 是指P1.9的MUX模式寄存器 
+IOMUXC_SetPinMux( muxRegister, muxMode,  inputRegister,        inputDaisy,  configRegister,  inputOnfield)
+ 
+    //muxRegister = IOMUXC_SW_MUX_CTL_PAD_MUX_MODE(muxMode) | IOMUXC_SW_MUX_CTL_PAD_SION(inputOnfield);
+       muxRegister.2-0=muxMode=0 | muxRegister.4=inputOnfield=1 ;    //bit2-0=000,  作为LPUART1_RXD; bit4=0, 使能输入
+
+    if (inputRegister != 0UL)    //这里是0，固跳过
+       *((volatile uint32_t *)inputRegister) = inputDaisy;
+ 
+-----
+
+//设置不使能高阻，100k下拉，不开opendrain，100MHz，驱动强度R0/4, 开工速度为慢速   P437页
+//参数：0x401F8098U, 0x0U, 0x401F81F0U, 0x1U, 0x401F8148U ， 0x10A0U       // 0x401F81F0U 是P1.9的config寄存器
+IOMUXC_SetPinConfig( muxRegister, muxMode,  inputRegister,    inputDaisy,  configRegister,  configValue)
+ 
+      configRegister = configValue;   //0x10A0     //待理解
+
+
+
+
+
+============================uart====发送数据============================
+
+flow：
+
+--main -->  -->   -->  
+
+
+-------------------------------------------------------
+
+
+main()
+
+    /* Send g_tipString out. */
+    LPUART_WriteBlocking( LPUART1, g_tipString, sizeof(g_tipString) / sizeof(g_tipString[0]) );
+
+
+------
+
+LPUART_WriteBlocking( *base, *data,   length )
+
+    *dataAddress = data;
+    transferSize        = length;
+
+    while (0 != transferSize)
+ 
+        while ( 0 == (base->STAT & （1<<23）) )  ;   //等待发送缓冲区里面的数据已完全发送出去    
+
+        base->DATA = *(dataAddress);
+        dataAddress++;
+        transferSize--;
+
+    while ( 0 == (base->STAT & LPUART_STAT_TC_MASK) ) ;
+ 
+
+              
+
+
+============================uart====接收数据=============================
+
+
+
+
+
+
+
+
+
+
+
+

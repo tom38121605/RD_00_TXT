@@ -1,0 +1,33 @@
+﻿
+
+typedef enum _serial_port_type
+{
+    kSerialPort_None = 0U,  
+    kSerialPort_Uart = 1U,  
+    kSerialPort_UsbCdc,    
+    kSerialPort_Swo,        
+    kSerialPort_Virtual,   
+    kSerialPort_Rpmsg,      
+    kSerialPort_UartDma,   
+    kSerialPort_SpiMaster,  
+    kSerialPort_SpiSlave,  
+} serial_port_type_t;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

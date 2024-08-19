@@ -1,0 +1,321 @@
+﻿
+
+typedef struct 
+{
+  __I  uint32_t VERID;                             /**< Version ID, offset: 0x0 */
+  __I  uint32_t PARAM;                             /**< Parameter, offset: 0x4 */
+       uint8_t RESERVED_0[8];
+  __IO uint32_t MCR;                               /**< Master Control, offset: 0x10 */
+  __IO uint32_t MSR;                               /**< Master Status, offset: 0x14 */
+  __IO uint32_t MIER;                              /**< Master Interrupt Enable, offset: 0x18 */
+  __IO uint32_t MDER;                              /**< Master DMA Enable, offset: 0x1C */
+  __IO uint32_t MCFGR0;                            /**< Master Configuration 0, offset: 0x20 */
+  __IO uint32_t MCFGR1;                            /**< Master Configuration 1, offset: 0x24 */
+  __IO uint32_t MCFGR2;                            /**< Master Configuration 2, offset: 0x28 */
+  __IO uint32_t MCFGR3;                            /**< Master Configuration 3, offset: 0x2C */
+       uint8_t RESERVED_1[16];
+  __IO uint32_t MDMR;                              /**< Master Data Match, offset: 0x40 */
+       uint8_t RESERVED_2[4];
+  __IO uint32_t MCCR0;                             /**< Master Clock Configuration 0, offset: 0x48 */
+       uint8_t RESERVED_3[4];
+  __IO uint32_t MCCR1;                             /**< Master Clock Configuration 1, offset: 0x50 */
+       uint8_t RESERVED_4[4];
+  __IO uint32_t MFCR;                              /**< Master FIFO Control, offset: 0x58 */
+  __I  uint32_t MFSR;                              /**< Master FIFO Status, offset: 0x5C */
+  __O  uint32_t MTDR;                              /**< Master Transmit Data, offset: 0x60 */
+       uint8_t RESERVED_5[12];
+  __I  uint32_t MRDR;                              /**< Master Receive Data, offset: 0x70 */
+       uint8_t RESERVED_6[156];
+  __IO uint32_t SCR;                               /**< Slave Control, offset: 0x110 */
+  __IO uint32_t SSR;                               /**< Slave Status, offset: 0x114 */
+  __IO uint32_t SIER;                              /**< Slave Interrupt Enable, offset: 0x118 */
+  __IO uint32_t SDER;                              /**< Slave DMA Enable, offset: 0x11C */
+       uint8_t RESERVED_7[4];
+  __IO uint32_t SCFGR1;                            /**< Slave Configuration 1, offset: 0x124 */
+  __IO uint32_t SCFGR2;                            /**< Slave Configuration 2, offset: 0x128 */
+       uint8_t RESERVED_8[20];
+  __IO uint32_t SAMR;                              /**< Slave Address Match, offset: 0x140 */
+       uint8_t RESERVED_9[12];
+  __I  uint32_t SASR;                              /**< Slave Address Status, offset: 0x150 */
+  __IO uint32_t STAR;                              /**< Slave Transmit ACK, offset: 0x154 */
+       uint8_t RESERVED_10[8];
+  __O  uint32_t STDR;                              /**< Slave Transmit Data, offset: 0x160 */
+       uint8_t RESERVED_11[12];
+  __I  uint32_t SRDR;                              /**< Slave Receive Data, offset: 0x170 */
+} LPI2C_Type;
+
+
+#define IOMUXC_GPIO_01_LPI2C1_SDA 0x401F80B8U, 0x3U, 0x401F81C4U, 0x3U, 0x401F8168U     //只看SDA (SCL类似，忽略)
+
+
+#define LPI2C1_BASE                              (0x401A4000u)
+
+
+
+LPI2C_MasterGetDefaultConfig(&masterConfig)
+
+          masterConfig->enableMaster            = true;
+          masterConfig->debugEnable             = false;
+          masterConfig->enableDoze              = true;
+          masterConfig->ignoreAck               = false;
+          masterConfig->pinConfig               = kLPI2C_2PinOpenDrain;
+          masterConfig->baudRate_Hz             = 100000U;
+
+          masterConfig->busIdleTimeout_ns       = 0U;    /* Set to 0 to disable the function */
+          masterConfig->pinLowTimeout_ns        = 0U;   /* Set to 0 to disable the function */
+          masterConfig->sdaGlitchFilterWidth_ns = 0U;   /* Set to 0 to disable the function */
+          masterConfig->sclGlitchFilterWidth_ns = 0U;     /* Set to 0 to disable the function */
+
+          masterConfig->hostRequest.enable      = false;
+          masterConfig->hostRequest.source      = kLPI2C_HostRequestExternalPin;
+          masterConfig->hostRequest.polarity    = kLPI2C_HostRequestPinActiveHigh;
+
+
+typedef enum _lpi2c_host_request_source
+{
+    kLPI2C_HostRequestExternalPin  = 0x0U, 
+    kLPI2C_HostRequestInputTrigger = 0x1U,  
+} lpi2c_host_request_source_t;
+
+ 
+typedef enum _lpi2c_host_request_polarity
+{
+    kLPI2C_HostRequestPinActiveLow  = 0x0U, 
+    kLPI2C_HostRequestPinActiveHigh = 0x1U  
+} lpi2c_host_request_polarity_t;
+
+
+---
+
+#define LPI2C_MSR_BBF_MASK                       (0x2000000U)
+#define LPI2C_MSR_BBF_SHIFT                      (25U)
+
+#define LPI2C_MSR_MBF_MASK                       (0x1000000U)
+#define LPI2C_MSR_MBF_SHIFT                      (24U)
+
+    kLPI2C_MasterClearFlags = kLPI2C_MasterEndOfPacketFlag | kLPI2C_MasterStopDetectFlag | kLPI2C_MasterNackDetectFlag |
+                                               kLPI2C_MasterArbitrationLostFlag | kLPI2C_MasterFifoErrFlag |
+                                               kLPI2C_MasterPinLowTimeoutFlag | kLPI2C_MasterDataMatchFlag,
+
+
+#define LPI2C_MSR_EPF_MASK                       (0x100U)
+#define LPI2C_MSR_EPF_SHIFT                      (8U)
+#define LPI2C_MSR_SDF_MASK                       (0x200U)
+#define LPI2C_MSR_SDF_SHIFT                      (9U)
+#define LPI2C_MSR_NDF_MASK                       (0x400U)
+#define LPI2C_MSR_NDF_SHIFT                      (10U)
+#define LPI2C_MSR_ALF_MASK                       (0x800U)
+#define LPI2C_MSR_ALF_SHIFT                      (11U)
+#define LPI2C_MSR_FEF_MASK                       (0x1000U)
+#define LPI2C_MSR_FEF_SHIFT                      (12U)
+#define LPI2C_MSR_PLTF_MASK                      (0x2000U)
+#define LPI2C_MSR_PLTF_SHIFT                     (13U)
+#define LPI2C_MSR_DMF_MASK                       (0x4000U)
+#define LPI2C_MSR_DMF_SHIFT                      (14U)
+
+
+
+
+
+//--------------------------------向从机写入数据------------------------------------------------------
+
+        // subAddress = 0x01, data = txBuff 
+        // start + slaveaddress(w) + subAddress      + length of data buffer + data buffer       + stop  
+
+        //发送器件W地址，看返回是否成功
+        //先检查确认bus总线不忙(MSR.25-24),再清MSR.14-8的标志位,关auto_stop(MCFGR1.8),等待fifo有空间,然后发送器件W地址MTDR.7-0 
+        LPI2C_MasterStart(EXAMPLE_I2C_MASTER, LPI2C_MASTER_SLAVE_ADDR_7BIT, kLPI2C_Write)
+ 
+        //取得fifo中正在发送的字节数MFSR.2-0
+        LPI2C_MasterGetFifoCounts(EXAMPLE_I2C_MASTER, NULL, &txCount);
+
+        //等待TX FIFO以前的数据全部发送完毕
+        while (txCount)
+            LPI2C_MasterGetFifoCounts(EXAMPLE_I2C_MASTER, NULL, &txCount);
+
+        //检查跟从机通讯是否成功，MSR.10=1，则不成功（有错误的NACK）
+        if (LPI2C_MasterGetStatusFlags(EXAMPLE_I2C_MASTER) & kLPI2C_MasterNackDetectFlag) //看是否错误标志MSR.10是否为1
+            return kStatus_LPI2C_Nak;
+
+        //写subaddr（寄存器地址），看返回是否成功
+        reVal = LPI2C_MasterSend(EXAMPLE_I2C_MASTER, &deviceAddress, 1);
+
+        //如果写入subaddr失败，则停止master
+        if (reVal != kStatus_Success)
+            if (reVal == kStatus_LPI2C_Nak)
+                LPI2C_MasterStop(EXAMPLE_I2C_MASTER);
+            return -1;
+
+
+        //向从机写入一串数据，看是否返回成功
+        reVal = LPI2C_MasterSend(EXAMPLE_I2C_MASTER, txBuff, LPI2C_DATA_LENGTH);
+
+        if (reVal != kStatus_Success)
+            if (reVal == kStatus_LPI2C_Nak)
+                LPI2C_MasterStop(EXAMPLE_I2C_MASTER);
+            return -1;
+
+
+       //停止I2C master， 看是否返回成功
+        reVal = LPI2C_MasterStop(EXAMPLE_I2C_MASTER);
+        if (reVal != kStatus_Success)
+            return -1;
+
+
+-------------
+
+//向从机发送停止指令MTDR10-8=010，并检查是否成功停止
+LPI2C_MasterStop( *base)
+
+    //等待fifo以前的数据发送(MFSR.2-0)，直到有发送空间(txCount>0)
+    LPI2C_MasterWaitForTxReady(base);
+
+    if (kStatus_Success == result)
+
+            //发送停止i2c指令,MTDR10-8=010
+            base->MTDR = kStopCmd;   
+
+            //读取状态，status =MSR
+            status = LPI2C_MasterGetStatusFlags(base);  
+
+            //看状态标志中，有没错误标志MSR.13-10，如有错误标志，则返回错误标志，清状态标志(含错误标志)，复位fifo
+            result = LPI2C_MasterCheckAndClearError(base, status);
+
+            //看是否停止成功bit8,1=1,1表示停止成功，MSR.8=1（停止标志）, MSR.0=1(请求发送数据--待理解)
+            if (  ( 0 != (status &kLPI2C_MasterStopDetectFlag)  ) &&   ( 0 != (status &kLPI2C_MasterTxReadyFlag) )  )
+            
+                 //清停止标志, MSR.8=0
+                LPI2C_MasterClearStatusFlags(base, kLPI2C_MasterStopDetectFlag);   
+                break;
+
+-------------
+
+//写subaddr（寄存器地址），看返回是否成功
+//参数：0x401A4000（LPI2C1_BASE）  , 1  ,  1
+LPI2C_MasterSend(*base, *txBuff, txSize)
+
+    *buf    = (uint8_t *)txBuff;
+
+    //发送数据到从机
+    while ( 0 != (txSize--) )
+
+        //等待fifo以前的数据发送(MFSR.2-1)，直到有发送空间(txCount>0)
+        result = LPI2C_MasterWaitForTxReady(base);
+        if (kStatus_Success != result)
+            break;
+
+        //向从机发送数据
+        base->MTDR = *buf++;   //MTDR.7-0=buf
+
+ 
+-----------------------------------------
+
+//rt1010rm的寄存器P1452：LPI2C Memory map
+//先检查确认bus总线不忙(MSR.25-24),再清MSR.14-8的标志位,关auto_stop(MCFGR1.8),等待fifo有空间,然后发送器件W地址MTDR.7-0 
+//参数：0x401A4000（LPI2C1_BASE）  , 0x7E （高7位）  ,  0 
+LPI2C_MasterStart( *base,  address,   dir)
+ 
+        //看是否MSR.25-24=10 表示bus忙
+        //LPI2C_CheckForBusyBus(base);
+        //     status=LPI2C_MasterGetStatusFlags(base);
+                return base->MSR;
+ 
+               if (     (0 != status.25)  &&  (0 == status.24 )     ) 
+                     ret = kStatus_LPI2C_Busy;
+
+
+       //---------------- 如果总线（bus）不忙，则继续下面的步骤 -------------
+   
+        //清零MSR.14-8
+        //LPI2C_MasterClearStatusFlags(base, (uint32_t)kLPI2C_MasterClearFlags);
+              base->MSR = statusMask;
+
+        //关 auto-stop 
+        base->MCFGR1 &= ~LPI2C_MCFGR1_AUTOSTOP_MASK;     //MCFGR1.8=0
+
+        //等待fifo以前的数据发送(MFSR.2-1)，直到有发送空间(txCount>0)
+        result = LPI2C_MasterWaitForTxReady(base);
+
+        //然后发送器件地址MTDR 
+        if (kStatus_Success == result)
+            base->MTDR =kStartCmd | ( address *2 +0 );  //MTDR.10-8=100, MTDR.7-0=器件地址w
+    
+ 
+---
+
+//rt1010rm的寄存器P1452：LPI2C Memory map
+//等待fifo以前的数据发送(MFSR.2-0)，直到有发送空间(txCount>0)
+//参数：0x401A4000（LPI2C1_BASE）  
+LPI2C_MasterWaitForTxReady( *base)
+
+    txFifoSize = FSL_FEATURE_LPI2C_FIFO_SIZEn(base)=4;
+ 
+    do
+    {
+        //取得fifo中正在发送的字节数MFSR.2-0
+        //LPI2C_MasterGetFifoCounts(base, NULL, &txCount);
+              txCount = base->MFSR.2-0;
+
+        //计算fifo里面发送缓冲区的剩余空间
+        txCount = 4 - txCount;
+
+        //取得I2C1的状态标志
+        //status = LPI2C_MasterGetStatusFlags(base);
+                status = base->MSR;
+
+        //检查I2C通讯是否出错,看状态标志中MSR.13-10,有没错误标志,如有错误标志,则返回错误标志,清状态标志(含错误标志)，复位fifo
+        result = LPI2C_MasterCheckAndClearError(base, status);
+        if (kStatus_Success != result)   //如果有错误标志，则退出，并返回该错误标志
+            break;
+ 
+    } while (0 == txCount);   //如果fifo正在发送，且没有空余发送空间，则继续等待 （直到有空间，或通讯出错）
+ 
+ 
+---
+
+//rt1010rm的寄存器P1452：LPI2C Memory map
+//看状态标志中，有没错误标志MSR.13-10，如有错误标志，则返回错误标志，清状态标志（含错误标志），复位fifo
+//参数：0x401A4000（LPI2C1_BASE）  ， status
+LPI2C_MasterCheckAndClearError( *base,   status) 
+
+    /* Check for error. These errors cause a stop to automatically be sent. We must */
+    /* clear the errors before a new transfer can start. */
+
+    //检查status是否有错误标志位：bit10,11,12,13
+    status &= kLPI2C_MasterErrorFlags;   //bit10,11,12,13   
+
+    //如果有错误标志位，则判断是那种错误
+    if (0U != status)
+ 
+        //错误标志检查，按严重成度顺序
+        if (0U != (status & kLPI2C_MasterPinLowTimeoutFlag))    //MSR.13=1  ，Pin Low Timeout 
+            result = kStatus_LPI2C_PinLowTimeout;
+      
+        else if (0U != (status &  kLPI2C_MasterArbitrationLostFlag))       //MSR.11 , Arbitration(仲裁) Lost
+            result = kStatus_LPI2C_ArbitrationLost;
+   
+        else if (0U != (status &  kLPI2C_MasterNackDetectFlag))      //MSR.10 ,NACK Detect   
+            result = kStatus_LPI2C_Nak;
+ 
+        else if (0U != (status & kLPI2C_MasterFifoErrFlag))    //MSR.12 ，FIFO Error
+            result = kStatus_LPI2C_FifoError;
+ 
+
+         //清零状态标志MSR.14-8 （所有状态标志）
+        //LPI2C_MasterClearStatusFlags(base, (uint32_t)kLPI2C_MasterClearFlags);
+              base->MSR = statusMask;
+
+        //复位接收和发送fifo,  These flags clear automatically(待理解，指那些flags)
+        base->MCR9-8=11;
+ 
+
+------------------------
+
+#define LOGIC_LED_ON  (0U)
+#define LOGIC_LED_OFF (1U)
+#ifndef BOARD_USER_LED_GPIO
+#define BOARD_USER_LED_GPIO GPIO1
+#endif
+#ifndef BOARD_USER_LED_GPIO_PIN
+#define BOARD_USER_LED_GPIO_PIN (11U)
+#endif
