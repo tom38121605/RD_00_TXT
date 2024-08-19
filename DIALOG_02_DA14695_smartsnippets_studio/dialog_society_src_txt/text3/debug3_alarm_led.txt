@@ -1,0 +1,600 @@
+
+ 
+
+任务创建flow： 
+ 
+
+   蓝牙测量距离
+   main  -->  system_init  -->   sdt_ble_events_task  -->   handle_evt_gattc_notification  -->   calc_distance   -->  cwd_calc_ifft_distance_phase_mag
+
+   取得rssi
+   main  -->   system_init  -->   sdt_ble_events_task  -->  ranging_task  -->  PERFORM_RANGING_NOTIFY   -->  find_the_zone_for_RSSI    
+            -->get_connection_rssi  -->  get_peer_connection_rssi  -->  ble_gap_conn_rssi_get  -->  find_the_zone_for_RSSI  --> trigger_alert
+
+
+   取得距离
+   main  -->   system_init  -->   sdt_ble_events_task  -->  ranging_task  -->  PERFORM_RANGING_NOTIFY  
+            -->  get_tof_distance  --> rf_ranging_initiator_start  --> find_the_zone_for_distance  --> trigger_alert
+
+
+   发出小灯闪烁警报
+   main  -->   system_init  -->   sdt_ble_events_task--> (trigger_alert)  -->  alerts_n_logging_task 小灯闪烁
+ 
+
+
+========sdt_ble_events_task======蓝牙测量距离=============================
+
+
+void sdt_ble_events_task(void *params)
+
+   。。。。。。
+
+   os_status = OS_TASK_CREATE(  log_task,      
+
+   cm_sys_clk_set(sysclk_XTAL32M);
+
+   for (;;)  
+ 
+      //等待本任务的通知
+      ret = OS_TASK_NOTIFY_WAIT(0, OS_TASK_NOTIFY_ALL_BITS, &notif, OS_TASK_NOTIFY_FOREVER); 
+
+      if (notif & BLE_APP_NOTIFY_MASK) 
+
+         case BLE_EVT_GATTC_NOTIFICATION:
+
+            //handle_evt_gattc_notification((ble_evt_gattc_notification_t *) hdr);
+               if (evt->handle == DTE_DATA_R_RESULT_NOTIFY)  
+                  if (evt->length == sizeof(dte_result_t)) 
+                     // responder results received  
+                     handle_dte_results_notification((dte_result_t *) evt->value);   //蓝牙测距   即hdr->value
+
+---
+
+//蓝牙测距
+//参数： evt->value
+handle_dte_results_notification(  *result)
+ 
+   if (ctx.dte_status == DTE_STATUS_CALC)  
+
+      __aeabi_memcpy(&r_result, result, sizeof(dte_result_t)); 
+
+      //计算距离1
+      calc_dist = calc_distance(&i_result, &r_result, &dqf, &dist_corr);
+
+      DBG_PRINTF(("calc_distance() = %.02f, dqf=%d", calc_dist, dqf));      
+
+      //如果距离错误，则输出错误提示
+      if (dqf == 0) 
+         DBG_PRINTF(("Invalid distance measurement: dqf=%d , Distance = %.02f", dqf, calc_dist));        
+         distance = 0;
+
+       else  
+         //update distance with cw offset  
+         calc_dist = calc_dist - cw_distance_offset;
+
+         DBG_PRINTF(("calc_dist - cw_distance_offset = %.02f, dqf=%d", calc_dist, dqf));         
+
+         //计算距离2
+         flt_dist = calc_filtered_distance(calc_dist, dqf, &ctx.filter_state);
+         distance = flt_dist;     
+
+      auto_xtal_trim(dqf, i_result.f_offset, 2.0);
+
+      update_dte_status(DTE_STATUS_STOP);
+
+  else  
+
+      if (ctx.dte_status != DTE_STATUS_STOP)  
+         ctx.dte_err_code = DTE_ERROR_SYNC_FAILED;
+         update_dte_status(DTE_STATUS_STOP);
+ 
+
+---
+
+//计算距离
+//输入参数： *i_result, *r_result
+//输出参数：  *dqf, *dcorr
+calc_distance( *i_result, *r_result, *dqf, *dcorr)
+
+        cm_sys_clk_set(sysclk_PLL96);
+
+        distance = cwd_calc_ifft_distance_phase_mag(i_result->phase, i_result->amplitude,  r_result->phase, r_result->amplitude);
+
+
+        //去掉multiplication factor后计算ppm平均值     //待理解
+        ppm_av = ((r_result->f_offset - i_result->f_offset) * 1e-2)/2;
+
+        // 计算距离修正值 , error = ppm_av/2  
+        *dcorr = (ppm_av / 2) * 320 * 3e-4 * (1.675 / 2);
+
+        /* Estimate frequency offset in kHz from ppm for dqf */
+        i_result->f_offset = (i_result->f_offset * DTE_FREQ_START_MHZ) * 1e-5;
+        r_result->f_offset = (r_result->f_offset * DTE_FREQ_START_MHZ) * 1e-5;
+
+        // 减去距离修正值  
+        if (distance != INFINITY) 
+                distance -= *dcorr;
+       
+        // 如果距离值不真实，则返回dqf=0表示测量无效 
+        *dqf = cwd_calc_dqf(distance, i_result->f_offset + r_result->f_offset, i_result->invalid_atoms + r_result->invalid_atoms);
+
+        cm_sys_clk_set(sysclk_XTAL32M);
+
+        return distance;
+
+---
+
+//具体测距算法  （忽略）
+float cwd_calc_ifft_distance_phase_mag( *i_phase,  *i_mag,   *r_phase,   *r_mag)
+ 
+    // convert phase mag to IQ  
+    for (int i = 0; i < cwd_parm.n_atom; i++)
+    
+        cwd_polar_to_iq(i_phase[i], (float)i_mag[i], &init_IQ[i*2], &init_IQ[i*2+1]);
+            *i_val = arm_cos_f32(phase) * mag;     // I [real part]
+            *q_val = -arm_sin_f32(phase) * mag;   // Q [imaginary part]
+           
+        cwd_polar_to_iq(r_phase[i], (float)r_mag[i], &refl_IQ[i*2], &refl_IQ[i*2+1]);
+   
+
+    return cwd_calc_ifft_distance();
+
+
+
+ 
+
+========ranging_task======取得距离=============================
+
+
+void ranging_task(void *params)
+
+   for (;;)   
+
+      //等待本任务的通知
+      ret = OS_TASK_NOTIFY_WAIT(0, OS_TASK_NOTIFY_ALL_BITS, &notif, OS_TASK_NOTIFY_FOREVER);
+ 
+//----
+
+      // Notified from BLE Manager?  
+      if (notif & PERFORM_RANGING_NOTIFY)  
+         avg_distance = MAX_DISTANCE_TO_RANGE;
+
+         if (sdt_connected)  
+ 
+            if (sdt_connected_as_master)   
+               DBG_PRINTF(("RANGING: master"));
+               if (gDevToF == 1)  
+                  avg_distance = get_tof_distance(DTE_ROLE_INITIATOR, wdog_id);     
+           
+             else 
+               DBG_PRINTF(("RANGING: slave"));
+               if (gDevToF == 1) 
+                  avg_distance = get_tof_distance(DTE_ROLE_RESPONDER, wdog_id);
+
+ 
+            if (sdt_connected_as_master) 
+               gDeviceToBeLogged = true;
+           else 
+               gDeviceToBeLogged = false;
+ 
+               if (ble_gattc_read(0x0, APP_READ_INFO_CHAR_HANDLE, 0x0) == BLE_STATUS_OK)  
+                  OS_EVENT_WAIT(sdt_get_remote_info_event, OS_MS_2_TICKS(CONN_INTERVAL_MAX*4));
+ 
+ 
+               if (gDeviceToBeLogged == true)   //master
+                  //check and remove the entry from the list if the master is the next one* in peripherals list. 
+ 
+                  OS_MUTEX_GET(wearable_sdts_mux, OS_MUTEX_FOREVER);   //待理解
+
+                  pAdv_dev = queue_remove(&wearable_sdts, find_advertiser, &(gPeerDevID.DevUID));
+                  if (pAdv_dev!=NULL)  
+                     DBG_PRINTF(("Remove ranged device from Q"));
+                     release_queue_elelemnt_space(pAdv_dev);                 //清除设备列表
+                     pAdv_dev = NULL;                  
+
+                  OS_MUTEX_PUT(wearable_sdts_mux);        //待理解     
+            
+            get_connection_rssi(wdog_id);      //待理解wdog_id －－应是传递普通的喂狗信号id
+
+            //打印最大RSSI
+            DBG_PRINTF(("Max connection RSSI = %d", connection_max_rssi_val));   
+
+
+//--------------------2-----------------------------
+
+            if (connection_max_rssi_val != -127 || avg_distance != MAX_DISTANCE_TO_RANGE)        //300
+
+               tmp_dist_zone = find_the_zone_for_distance(avg_distance);               //待理解
+               tmp_rssi_zone = find_the_zone_for_RSSI(connection_max_rssi_val);      //待理解
+
+               if (avg_distance == MAX_DISTANCE_TO_RANGE)  
+
+                  // if failed to measure the distance with ToF
+                  //then use the distance from RSSI only
+       
+                  tmp_log.Zone = tmp_rssi_zone;
+                  DBG_PRINTF(("Zone selected with RSSI"));
+
+              else 
+
+                  // if measured a distance with ToF ... 
+
+                  if (tmp_rssi_zone+1 < tmp_dist_zone)   // 如果RSSI信号比wira强， 优先使用 RSSI的判断，因直线测距之间可能有遮挡                      
+                     tmp_log.Zone = tmp_rssi_zone;
+                     DBG_PRINTF(("Zone selected with RSSI"));
+
+                  else  
+                     tmp_log.Zone = tmp_dist_zone;
+                     DBG_PRINTF(("Zone selected with Distance Ranging"));
+       
+
+               hw_rtc_get_time_clndr(&time_cfg, &calendar_cfg);  //取得rtc时间
+
+
+              //设置log
+               tmp_log.start   = 0x7C;
+
+               tmp_log.DevType = gLocalDevID.DevType;
+               tmp_log.DevUID  = gLocalDevID.DevUID;
+
+               tmp_log.hour    = time_cfg.hour;
+               tmp_log.minute  = time_cfg.minute;
+               tmp_log.sec     = time_cfg.sec;
+
+               tmp_log.year    = calendar_cfg.year;
+               tmp_log.month   = calendar_cfg.month;
+               tmp_log.mday    = calendar_cfg.mday;
+
+               tmp_log.ContactDevType = gPeerDevID.DevType;
+               tmp_log.ContactDevUID  = gPeerDevID.DevUID;
+ 
+               tmp_log.BatPercent = read_battery_level();
+ 
+               adv_dev_t* pAdv_dev;
+
+               // invalidate peripheral entries in the log record    //待理解
+               tmp_log.PerDev_1_Type = tmp_log.PerDev_2_Type = tmp_log.PerDev_3_Type = tmp_log.PerDev_4_Type = 0xFF;
+               tmp_log.PerDev_1_UID = tmp_log.PerDev_2_UID = tmp_log.PerDev_3_UID = tmp_log.PerDev_4_UID = 0x0;
+
+               // Protect the list of peripherals   //待理解
+               OS_MUTEX_GET(peripheral_sdts_mux, OS_MUTEX_FOREVER);
+ 
+
+               // get the first 4 peripherals in the list and put them in the log entry  
+               pAdv_dev = queue_pop_front(&peripheral_sdts);
+
+               //连续测4次距离
+               if (pAdv_dev != NULL)  
+                  tmp_log.PerDev_1_Type = pAdv_dev->id.DevType;
+                  tmp_log.PerDev_1_UID = pAdv_dev->id.DevUID;
+                  release_queue_elelemnt_space(pAdv_dev);
+                  pAdv_dev=NULL;
+
+                  pAdv_dev = queue_pop_front(&peripheral_sdts);
+                  if (pAdv_dev != NULL)  
+                     tmp_log.PerDev_2_Type = pAdv_dev->id.DevType;
+                     tmp_log.PerDev_2_UID = pAdv_dev->id.DevUID;
+                     release_queue_elelemnt_space(pAdv_dev);
+                     pAdv_dev=NULL;
+
+                     pAdv_dev = queue_pop_front(&peripheral_sdts);
+                     if (pAdv_dev != NULL) 
+                        tmp_log.PerDev_3_Type = pAdv_dev->id.DevType;
+                        tmp_log.PerDev_3_UID = pAdv_dev->id.DevUID;
+                        release_queue_elelemnt_space(pAdv_dev);
+                        pAdv_dev=NULL;
+
+                        pAdv_dev = queue_pop_front(&peripheral_sdts);
+                        if (pAdv_dev != NULL)  
+                           tmp_log.PerDev_4_Type = pAdv_dev->id.DevType;
+                           tmp_log.PerDev_4_UID = pAdv_dev->id.DevUID;
+                           release_queue_elelemnt_space(pAdv_dev);
+                           pAdv_dev=NULL;
+               
+
+               // clean the peripherals list  
+               queue_remove_all(&peripheral_sdts, release_queue_elelemnt_space);
+               OS_MUTEX_PUT(peripheral_sdts_mux);
+ 
+               if (gDeviceToBeLogged) 
+
+                 //记录log
+                //   gPeerDevID has the info we need for logging for slave 
+
+                  DBG_PRINTF(("Add entry to log Q"));
+                  OS_QUEUE_PUT(log_msgs, &tmp_log, 0);               
+ 
+              // 判断和启动小灯报警
+               trigger_alert(tmp_log.Zone);    
+    
+            else
+               sdt_ranging = false;
+
+               /* done with this and failed to range
+               if (sdt_connected)  
+                  ble_gap_disconnect(0x0, BLE_HCI_ERROR_REMOTE_USER_TERM_CON);
+            
+
+//--------------------2------end-----------------------
+
+               // ... and trigger the selection of the next device 
+               OS_TASK_NOTIFY(proximity_task_h, PROX_CHECK_APP_NOTIFY, OS_NOTIFY_SET_BITS);
+
+
+
+--------------------取得rssi-------------------
+
+get_connection_rssi(int8_t wdog_id)
+
+   for (get_local_conn_rssi_retries = 0; get_local_conn_rssi_retries < MAX_LOCAL_CONN_RSSI_READS && sdt_connected; ) 
+ 
+     //读取rssi
+     flg=get_peer_connection_rssi() ;
+
+     if ( flg )     //读取rssi成功
+
+         OS_EVENT_WAIT(sdt_rssi_read_event, OS_MS_2_TICKS(CONN_INTERVAL_MAX*4));
+         get_local_conn_rssi_retries++;
+
+     else     //读取rssi失败
+
+         //延时一个连接间隔
+         OS_DELAY_MS(CONN_INTERVAL_MAX); 
+ 
+---
+
+//取得蓝牙RSSI 
+get_peer_connection_rssi(void)
+
+
+   取得蓝牙RSSI,存放到local_rssi_val
+   ble_status = ble_gap_conn_rssi_get(0x0, &local_rssi_val);
+
+   //待理解
+   if (ble_status == BLE_STATUS_OK && local_rssi_val != 0 && local_rssi_val != -127) 
+
+      // Make a write request to the peer for WRITE_RSSI characteristic and pass the local RSSI   //待理解
+      ble_status = ble_gattc_write(0x0, APP_WRITE_RSSI_CHAR_HANDLE, 0x0, sizeof(local_rssi_val), (uint8_t *)(&local_rssi_val));
+
+      if (ble_status == BLE_STATUS_OK)  
+         return true;
+
+   return false;
+
+---
+
+//取得蓝牙RSSI,返回到local_rssi_val
+  参数： local_rssi_val
+ ble_gap_conn_rssi_get(  conn_idx,  *conn_rssi)
+ 
+        // 生成获取RSSI指令
+        cmd = alloc_ble_msg(BLE_MGR_GAP_CONN_RSSI_GET_CMD, sizeof(*cmd));
+        cmd->conn_idx = conn_idx;
+
+        // 执行getRSSI 指令， 把结果存放到rsp结构体中
+        if (!ble_cmd_execute(cmd, (void **) &rsp, ble_mgr_gap_conn_rssi_get_cmd_handler))  
+                return BLE_ERROR_BUSY;    
+
+        //remove offset 127  
+        *conn_rssi = rsp->conn_rssi;
+
+        ret = rsp->status;
+        OS_FREE(rsp);
+
+        return ret;
+ 
+
+-------------
+
+//得出距离等级
+find_the_zone_for_RSSI(int8_t rssi) 
+
+   if (rssi != -127 && rssi != 0)  
+      if (rssi >= DangerZoneRssi) 
+         tmp_zone = DANGER_ZONE;
+
+      else 
+         if ((rssi < DangerZoneRssi) && (rssi >= WarningZoneRssi))  
+            tmp_zone = WARNING_ZONE;
+        else  
+            if ((rssi < WarningZoneRssi) && (rssi >= CoarseZoneRssi)) 
+                tmp_zone = COARSE_ZONE;
+            else 
+               if ((rssi < CoarseZoneRssi)) 
+                   tmp_zone = BLE_LIMIT_ZONE;
+
+   return tmp_zone;
+
+--------------------取得rssi-------end------------
+
+
+//取得距离 （是内部多次取得后的平均距离）
+//参数： role
+get_tof_distance(  role,  wdog_id) 
+
+   avg_distance = MAX_DISTANCE_TO_RANGE;
+
+   if (OS_EVENT_CHECK(rf_ragning_event) == OS_EVENT_SIGNALED) 
+      OS_EVENT_WAIT(rf_ragning_event, 0);                                            //to clear already signaled event  //待理解
+
+   pm_sleep_mode_request(pm_mode_active);      //待理解  －－应是选择sleep模式
+
+   for (int i=0; i<MAX_RF_RANGE_READS && sdt_connected; i++)  
+
+      if (role == DTE_ROLE_INITIATOR)  
+         rf_ranging_initiator_start();                    //配置主机测距的开启
+         update_dte_status(DTE_STATUS_START);
+
+      //延时等待。。。  //待理解
+      status = OS_EVENT_WAIT(rf_ragning_event, OS_MS_2_TICKS(TOF_MEASURE_TIMEOUT + 10));    // Wait for signaling 10ms more than the Timeout
+
+      if (status == OS_EVENT_SIGNALED)  
+         if (distance > MIN_DISTANCE_TO_RANGE && distance < MAX_DISTANCE_TO_RANGE)  
+
+           // 打印每次测量距离log
+           DBG_PRINTF(("\tDistance measurement #%d = %.02f , pwr=%d, offset=%.02f, r.AGC=%d, i.AGC=%d, r.RSSI=%d, i.RSSI=%d",
+                                        i, distance, dte_params.tx_power, cw_distance_offset, r_result.AGC_gain, i_result.AGC_gain, r_result.ble_rssi,i_result.ble_rssi));
+        
+            tmp_distance_sum += distance;
+            tmp_distance_count++;
+ 
+
+   //待理解
+   pm_sleep_mode_release(pm_mode_active);   －－应是释放sleep模式
+
+
+   //求取距离平均值
+   if (tmp_distance_count>0) 
+      avg_distance = tmp_distance_sum/tmp_distance_count;
+  
+
+   //判断距离是否有效，如无效则打印如下信息
+   if (avg_distance == MAX_DISTANCE_TO_RANGE)  
+      DBG_PRINTF(("\tFAILED DISTANCE MEASUEREMENT"));
+          return avg_distance;
+
+  
+  //打印平均距离
+   if (role == DTE_ROLE_INITIATOR) 
+      DBG_PRINTF(("\tINITIATOR MEASURED DISTANCE = %.02f", avg_distance));
+   else 
+      DBG_PRINTF(("\tRESPONDER MEASURED DISTANCE = %.02f", avg_distance));
+   
+   return avg_distance;
+ 
+ ---
+//配置主机测距的开启
+rf_ranging_initiator_start(void)
+ 
+   dte_params.is_initiator = true;
+   cfg_params.role = DTE_ROLE_INITIATOR;
+   ctx.dte_status = DTE_STATUS_STOP;
+
+   // Initialize CW distance calculation, buffer address with IQ data is not fixed   
+   cwd_init(dte_params.is_initiator,       //初始化测距参数  //待理解
+       dte_params.nb_atoms,
+       dte_params.meas_length_us,
+       dte_params.f_step_mhz);
+
+    // Send HCI command to set DTE acquisition parameters  
+   ble_error_t ble_err = ble_gap_dte_params_set(&dte_params);
+
+   //如果设置上面的参数出现错误，则打印log信息
+   if (ble_err != BLE_STATUS_OK) 
+      DBG_PRINTF(("%s: ble_gap_dte_params_set status = %d", __func__, ble_err));
+ 
+
+---------
+
+//判断距离等级
+ find_the_zone_for_distance(float distance)
+ 
+   if (distance <= DangerZoneDistance)  
+      tmp_zone = DANGER_ZONE;            //危险距离
+
+   else 
+      if ((distance > DangerZoneDistance) && (distance <= WarningZoneDistance)) 
+         tmp_zone = WARNING_ZONE;            //warn距离
+
+      else  
+
+         if ((distance > WarningZoneDistance) && (distance <= CoarseZoneDistance))
+            tmp_zone = COARSE_ZONE;            //粗估距离
+
+       else 
+
+            if ((distance > CoarseZoneDistance)) 
+               tmp_zone = BLE_LIMIT_ZONE;            //外围距离
+
+ 
+   return tmp_zone;
+ 
+
+-----------
+
+trigger_alert(uint8_t tmp_zone) 
+
+   if (tmp_zone == WARNING_ZONE)  
+      alert_notify = WARNING_ALERT_NOTIFY;  
+
+   if (tmp_zone == DANGER_ZONE) 
+      alert_notify = DANGER_ALERT_NOTIFY;
+ 
+    //把warn通知传递给logging_task
+   OS_TASK_NOTIFY(alerts_log_task_h, alert_notify, OS_NOTIFY_SET_BITS);
+
+
+
+=============alerts_n_logging_task======小灯闪烁任务========================
+
+  
+//led闪烁在log里面
+void alerts_n_logging_task(void *params)
+
+   //设置led的pwm引脚P11
+   static const timer_config audiable_pwm_timer_cfg = 
+      .clk_src = HW_TIMER_CLK_SRC_INT,
+      .prescaler = 0,
+      .timer =   .direction = HW_TIMER_DIR_UP,
+            .reload_val = 0,
+            .free_run = true ,
+      .pwm = 
+         .frequency  = configSYSTICK_CLOCK_HZ/AUDIBLE_TONE_HZ,   //! This will make the audible tone
+         .duty_cycle = 1,               //! 1 = 50% Duty Cycle
+         .pwm_active_in_sleep = true,
+         .pin  = HW_GPIO_PIN_1,
+         .port = HW_GPIO_PORT_1,
+  
+ 
+   for (;;)  
+  
+ 
+      ret = OS_TASK_NOTIFY_WAIT(0, OS_TASK_NOTIFY_ALL_BITS, &notif, OS_TASK_NOTIFY_FOREVER);
+  
+      num_of_beeps = 0;
+
+      //如果有warn信号
+      if (notif & WARNING_ALERT_NOTIFY)  
+         num_of_beeps = NUM_OF_WARNING_ALERT_BEEPS;
+
+      //如果有danger信号
+      if (notif & DANGER_ALERT_NOTIFY)  
+         num_of_beeps = NUM_OF_DANGER_ALERT_BEEPS;
+     
+
+      printf("\t%dx beep...\r\n", num_of_beeps);
+
+      //小面是小灯闪烁
+      if (num_of_beeps > 0)  
+         for (int i=0; i<num_of_beeps; i++) 
+ 
+            hw_timer_init(HW_TIMER, &audiable_pwm_timer_cfg);
+            hw_gpio_set_pin_function(HW_GPIO_PORT_1, HW_GPIO_PIN_1, HW_GPIO_MODE_OUTPUT, HW_GPIO_FUNC_TIM_PWM);
+            hw_timer_enable(HW_TIMER);
+            OS_DELAY_MS(AUDIBLE_TONE_DURATION);
+            hw_timer_disable(HW_TIMER);
+            OS_DELAY_MS(AUDIBLE_TONES_GAP);
+ 
+      //继续开启本任务
+      OS_TASK_NOTIFY(log_task_h, LOG_DATA_READY_NOTIFY, OS_NOTIFY_SET_BITS);
+ 
+      sdt_ranging = false;
+
+      //待理解
+      if (sdt_connected)  
+         ble_gap_disconnect(0x0, BLE_HCI_ERROR_REMOTE_USER_TERM_CON);
+ 
+ 
+-----------
+
+trigger_alert(uint8_t tmp_zone) 
+
+   if (tmp_zone == WARNING_ZONE)  
+      alert_notify = WARNING_ALERT_NOTIFY;  
+
+   if (tmp_zone == DANGER_ZONE) 
+      alert_notify = DANGER_ALERT_NOTIFY;
+ 
+    //把warn通知传递给logging_task
+   OS_TASK_NOTIFY(alerts_log_task_h, alert_notify, OS_NOTIFY_SET_BITS);
+

@@ -1,0 +1,83 @@
+
+
+typedef enum {
+        DTE_ROLE_UNDEFINED = 0,
+        DTE_ROLE_INITIATOR = 1,
+        DTE_ROLE_RESPONDER = 2
+} dte_role_t;
+
+
+void  config_params_init(config_params_t *cfg)
+{
+        cfg->role = DEFAULT_DTE_ROLE;
+        cfg->set_number = DEFAULT_DEMO_SET_NUM;
+        cfg->cw_offset = 0;
+        cfg->xtal32m_trim_value = 0xFFFF; // invalid value
+        cfg->flag_auto_xtal32_trim = 0;
+        cfg->filter_type = DEFAULT_FILTER_TYPE;
+        cfg->cli_mode = 0;
+        cfg->multilink_num = 1;
+        cfg->km_variance_process_noise_q = DEFAULT_KM_PROCESS_NOISE;
+        cfg->km_variance_measurement_noise_S = DEFAULT_KM_MEASUREMENT_NOISE;
+}
+
+
+
+
+           ctx.svc.read_req = handle_read_req;   //读入距离等参数的函数
+           ctx.svc.write_req = handle_write_req;   //输出距离等参数的函数
+
+typedef struct {
+        ble_evt_hdr_t   hdr;
+        uint8_t         status;
+        uint32_t        smpl_buf;
+} ble_evt_gap_rfmon_report_t;
+
+
+struct peripheral_context {
+
+        ble_service_t svc;
+
+        uint16_t conn_idx;
+
+        dte_status_t dte_status;
+        dte_error_t dte_err_code;
+
+        // handles
+        uint16_t dte_i_result_val_h;
+        uint16_t dte_r_result_val_h;
+        uint16_t dte_r_result_ccc_h;
+
+        uint8_t conf_set_number;
+
+        filter_state_t  filter_state;
+};
+
+__RETAINED_RW static struct peripheral_context ctx = {0};
+
+
+---
+
+typedef enum
+{
+	eNoAction = 0,				 
+	eSetBits,					 
+	eIncrement,					 
+	eSetValueWithOverwrite,		 
+	eSetValueWithoutOverwrite	 
+} eNotifyAction;
+typedef enum {
+        OS_NOTIFY_NO_ACTION = eNoAction,   /subject task receives event, but its notification value is not updated 
+        OS_NOTIFY_SET_BITS = eSetBits,         /notification value of subject task will be bitwise ORed with task value
+        OS_NOTIFY_INCREMENT = eIncrement,    /notification value of subject task will be incremented by one
+        OS_NOTIFY_VAL_WITH_OVERWRITE = eSetValueWithOverwrite, //notification value of subject task is unconditionally set to task value 
+        OS_NOTIFY_VAL_WITHOUT_OVERWRITE = eSetValueWithoutOverwrite,  / if subject task has a notification pending then notification value
+                                                                                                                     will be set to task value otherwise task value is not updated
+} OS_NOTIFY_ACTION;
+
+
+
+
+
+
+

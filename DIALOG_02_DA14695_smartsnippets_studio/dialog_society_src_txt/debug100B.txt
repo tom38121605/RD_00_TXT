@@ -1,0 +1,131 @@
+
+ typedef struct {
+        ad_spi_controller_conf_t *conf;
+  
+        OS_TASK  owner; /**< The task which opened the controller */
+        OS_EVENT event; /**< Semaphore for async calls  */
+        OS_MUTEX busy;  /**< Semaphore for thread safety */
+} ad_spi_data_t;
+
+
+===========================
+
+
+//SPI 1 configuration
+ 
+#define DAC_MC4822_DO_PORT      ( HW_GPIO_PORT_0 )
+#define DAC_MC4822_DO_PIN       ( HW_GPIO_PIN_26 )
+ 
+#define DAC_MC4822_DI_PORT      ( HW_GPIO_PORT_0 )
+#define DAC_MC4822_DI_PIN       ( HW_GPIO_PIN_27 )
+
+#define DAC_MC4822_CLK_PORT     ( HW_GPIO_PORT_0 )
+#define DAC_MC4822_CLK_PIN      ( HW_GPIO_PIN_28 )
+
+
+/* SPI chip-select pin(s) */
+#define DAC_MC4822_CS_PORT      ( HW_GPIO_PORT_0 )
+#define DAC_MC4822_CS_PIN       ( HW_GPIO_PIN_29 )
+
+-----------
+
+//定义CS引脚
+ad_io_conf_t   spi_master_cs[] = 
+
+        .port = DAC_MC4822_CS_PORT,
+        .pin  = DAC_MC4822_CS_PIN,
+
+        .on = {
+                .mode     = HW_GPIO_MODE_OUTPUT_PUSH_PULL,
+                .function = HW_GPIO_FUNC_SPI_EN,
+                .high     = true
+                },
+
+        .off = {
+                .mode     = HW_GPIO_MODE_OUTPUT_PUSH_PULL,
+                .function = HW_GPIO_FUNC_SPI_EN,
+                .high     = true
+                 } 
+
+
+//定义MI,MO,CLK引脚
+ad_spi_io_conf_t    bus_SPI1 = {
+
+        .spi_do = {
+                .port = DAC_MC4822_DO_PORT,
+                .pin  = DAC_MC4822_DO_PIN,
+                .on   = {HW_GPIO_MODE_OUTPUT_PUSH_PULL, HW_GPIO_FUNC_SPI_DO, false},
+                .off  = {HW_GPIO_MODE_INPUT,            HW_GPIO_FUNC_GPIO,   true},
+        },
+        .spi_di = {
+                .port = DAC_MC4822_DI_PORT,
+                .pin  = DAC_MC4822_DI_PIN,
+                .on   = {HW_GPIO_MODE_INPUT, HW_GPIO_FUNC_SPI_DI, false},
+                .off  = {HW_GPIO_MODE_INPUT, HW_GPIO_FUNC_GPIO,   true},
+        },
+        .spi_clk = {
+                .port = DAC_MC4822_CLK_PORT,
+                .pin  = DAC_MC4822_CLK_PIN,
+                .on   = {HW_GPIO_MODE_OUTPUT_PUSH_PULL, HW_GPIO_FUNC_SPI_CLK, false},
+                .off  = {HW_GPIO_MODE_INPUT,            HW_GPIO_FUNC_GPIO,    true},
+        },
+
+        .cs_cnt = 1,
+        .spi_cs = spi_master_cs,
+
+        .voltage_level = HW_GPIO_POWER_V33
+
+
+//设置spi频率等
+ ad_spi_driver_conf_t     drv_SPI1 =  
+        .spi = {
+                .cs_pad = {DAC_MC4822_CS_PORT, DAC_MC4822_CS_PIN},
+                .word_mode = HW_SPI_WORD_16BIT, /* 2-byte mode */
+                .smn_role  = HW_SPI_MODE_MASTER,
+                .polarity_mode = HW_SPI_POL_LOW,
+                .phase_mode    = HW_SPI_PHA_MODE_0,
+                .mint_mode = HW_SPI_MINT_DISABLE,
+                .xtal_freq = HW_SPI_FREQ_DIV_8,
+                .fifo_mode = HW_SPI_FIFO_RX_TX,
+                .disabled  = 0,      
+                .ignore_cs = false,
+                .use_dma   = true,
+                .rx_dma_channel = HW_DMA_CHANNEL_0,
+                .tx_dma_channel = HW_DMA_CHANNEL_1
+        }
+
+
+//定义spi device
+ad_spi_controller_conf_t     dev_SPI_CUSTOM_DEVICE = {
+        .id  = HW_SPI1,
+        .io  = &bus_SPI1,
+        .drv = &drv_SPI1
+};
+//spi_device   DAC_MC4822_DEVICE = &dev_SPI_CUSTOM_DEVICE;
+spi_device   SPIDEV = &dev_SPI_CUSTOM_DEVICE;
+
+------------
+
+#define HW_SPI_REG_SETF(id, reg, field, val) 
+
+        SBA(id)->reg = (  (SBA(id)->reg & ~(SPI_##reg##_##field##_Msk)) | \
+        ((SPI_##reg##_##field##_Msk) & ((val) << (SPI_##reg##_##field##_Pos))))
+
+//HW_SPI_REG_SETF(id, SPI_CTRL_REG, SPI_CLK, cfg->xtal_freq);
+
+---
+
+#define SPI_SPI_CTRL_REG_SPI_CLK_Pos      (3UL)                   
+#define SPI_SPI_CTRL_REG_SPI_CLK_Msk      (0x18UL)  
+ 
+ SBA(id)->SPI_CTRL_REG =   SBA(id)->reg & ~SPI_SPI_CTRL_REG_SPI_CLK_Msk 
+ SBA(id)->SPI_CTRL_REG  |=SPI_SPI_CTRL_REG_SPI_CLK_Msk & （val<<SPI_SPI_CTRL_REG_SPI_CLK_Pos)
+
+
+---
+
+#define AD_SPI_HANDLE_IS_VALID(__handle) (((__handle == &spi1_data) || (__handle == &spi2_data)) && (((ad_spi_data_t*) __handle)->conf != NULL))
+
+
+
+

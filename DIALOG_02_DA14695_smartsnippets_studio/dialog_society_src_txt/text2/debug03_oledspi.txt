@@ -1,0 +1,664 @@
+
+
+SPI flow（总）：
+
+    system_init --> prvSetupHardware --> ad_lcdc_io_config 
+
+
+    system_init --> ble_range_dte_task  --> ble_central_task  -->  handle_evt_gattc_notification -->  handle_dte_results_notification  -->  display_str
+    display_str --> hw_lcd_draw_string  -->  ui_draw_string  --> gdi_display_update
+
+
+=======================spi引脚配置初始化=======================
+
+flow：   
+    system_init --> prvSetupHardware --> ad_lcdc_io_config
+
+--------------------------------------------------------------------
+
+
+prvSetupHardware(  )
+
+        /* Init hardware */
+        pm_system_init(periph_init);
+
+        ad_lcdc_io_config( psp27801_cfg.io , AD_IO_CONF_OFF);
+
+
+---
+
+//初始化lcd的spi引脚，关闭spi引脚的spi功能，关闭spi引脚的io功能
+ad_lcdc_io_config( *io, state)   //  state = AD_IO_CONF_OFF 
+
+        //开启io口配置，跳过忽略
+        hw_sys_pd_com_enable();    
+
+        for (*cfg = io->io_list; cfg < io->io_cnt + io->io_list;    cfg++) 
+                
+                if (state == AD_IO_CONF_OFF)   //关闭spi引脚功能
+                        hw_gpio_configure_pin(cfg->port, cfg->pin, cfg->off.mode, cfg->off.function,
+                                cfg->off.high);
+               else                                            //打开spi引脚功能
+                        hw_gpio_configure_pin(cfg->port, cfg->pin, cfg->on.mode, cfg->on.function,
+                                cfg->on.high);
+                
+                hw_gpio_configure_pin_power(cfg->port, cfg->pin, io->voltage_level);     //设置引脚电源为3.3v
+
+                hw_gpio_pad_latch_enable(cfg->port, cfg->pin);       //打开io口开关
+                hw_gpio_pad_latch_disable(cfg->port, cfg->pin);       //关闭io口开关    //待理解 -- 为什么要关闭
+       
+
+        //关闭io口配置，跳过忽略
+        hw_sys_pd_com_disable(); 
+
+
+=======================spi打开设备，读写操作=======================
+ 
+flow：   
+    //system_init --> ble_range_dte_task  --> ble_central_task  -->  handle_evt_gattc_notification -->  handle_dte_results_notification  -->  display_str
+    display_str --> hw_lcd_draw_string  -->  ui_draw_string  --> gdi_display_update
+
+ 
+===================================
+
+//向lcd写入字符串并显示
+hw_lcd_draw_string( *dist_str,  *rssi_str)
+
+        //static update_ind = true;
+        //char indicator[2];
+
+        //if (update_ind) {
+        //        sprintf(indicator,".");
+        //else
+        //        sprintf(indicator," ");      
+        //update_ind = !update_ind;
+
+        gdi_set_bg_color(GDI_COLOR_DBLUE);
+
+       //关于坐标图像的处理，先忽略跳过
+       ui_draw_string(WHITE, 80, 50, &calibri_18ptFontInfo, dist_str, 15);
+
+
+       //打开lcd设备（应也是spi设备），并输出显示图像文字
+       gdi_display_update();
+
+
+------
+
+//关于坐标图像的处理，先忽略跳过
+ui_draw_string( color,  x,   y,   *font,   *str, scale)
+ 
+        gdi_coord_t x_offset = x;
+        const char *cur_char = str;
+
+        while (*cur_char) 
+                if (*cur_char == ' ')  
+ 
+                        x_offset -= (font->spaceWidth * scale) / 10;
+ 
+               else if (((uint8_t)font->start) <= ((uint8_t)*cur_char)
+                        && ((uint8_t)*cur_char) <= ((uint8_t)font->end))  
+ 
+                        x_offset -= x_offset == x ? 0 : font->kerning;
+                        x_offset -= gdi_draw_font(*cur_char, color, x_offset, y, scale, font);
+
+             cur_char++;
+   
+---
+
+//关于坐标图像的处理2，先忽略跳过
+ gdi_draw_font(  character,  color,  x,   y,  scale,  * font )
+ 
+        pos = character - font->start;
+        width = (font->descriptor[pos].width * scale) / 10;
+        height = (font->height * scale) / 10;
+        s_stride = CEILING_FUNC(font->descriptor[pos].width, 8);
+
+        for (int row = 0; row < height; ++row)  
+                for (int col = 0; col < width; ++col)  
+                       s_byte = ((col * 10) / scale) / 8 + ((row * 10) / scale) * s_stride;
+                       s_pos = ((col * 10) / scale) % 8;
+
+                        if (font->bitmap[font->descriptor[pos].offset + s_byte] & (1 << s_pos)) 
+                                gdi_draw_dot(color, x - col, y - row);
+    
+        return width;
+
+ 
+------
+
+//打开lcd设备（应也是spi设备），并输出显示图像文字
+gdi_display_update(void)  
+ 
+        ad_lcdc_handle_t dev;
+        hw_lcdc_layer_t layer;
+
+        layer.baseaddr = (uint32_t)gdi->buffer[gdi->active_buf];
+        layer.dma_prefetch_lvl = HW_LCDC_FIFO_PREFETCH_LVL;
+        layer.format = gdi_to_layer_color_format(gdi->color_format);
+        layer.resx = gdi->width;
+        layer.resy = gdi->height;
+        layer.startx = 0;
+        layer.starty = 0;
+        layer.stride = gdi->stride;
+
+        //打开lcd设备 (好像不是通用的spi接口)
+        //dev = dev_open();
+           dev = ad_lcdc_open(LCDC_CONFIG);
+
+        //lcd显示
+        dev_draw(dev, &layer);
+
+        关闭lcd设备
+        dev_close(dev);
+ 
+
+
+
+==============================打开lcd设备================================
+
+ad_lcdc_open -->  ad_lcdc_reconfig -->  ad_lcdc_gpio_configure
+
+
+-----------------
+
+ //打开lcd设备 (好像不是通用的spi接口) 
+ //参数：psp27801_cfg
+ ad_lcdc_open(  *conf)   //conf=LCDC_CONFIG=psp27801_cfg
+ 
+        ad_lcdc_data_t *lcdc = &lcdc_data; 
+
+        /* Acquire resources */
+        resource_acquire(RES_MASK(RES_ID_LCDC), RES_WAIT_FOREVER);
+
+
+        /* Update adapter data */
+        lcdc->conf = conf;
+        lcdc->owner = OS_GET_CURRENT_TASK(); 
+
+        pm_sleep_mode_request(pm_mode_idle);    //待理解
+
+        //配置了lcd的寄存器，频率等      //待理解
+        ad_lcdc_reconfig(lcdc, conf->drv);  
+
+        // 设置lcd的spi引脚的方向，电平和引脚开关
+        ad_lcdc_gpio_configure(conf->io, AD_LCDC_LATCH_TYPE_CTRL_SIG);
+
+         return lcdc;
+ 
+
+-------
+
+// 设置lcd的spi引脚的方向，电平和引脚开关
+ad_lcdc_gpio_configure( *io_cfg,   type)    //type=0
+ 
+        uint8_t   *pin_list;
+        size_t      pin_list_size;
+
+
+        //关于lcd引脚，待理解
+        //-- if ((pin_list_size = ad_lcdc_get_pins(&pin_list, type)) == 0)    //去掉这句，lcd也能正常显示
+                return;
+
+        //开启io口设置
+        hw_sys_pd_com_enable();
+
+        //逐个对引脚操作，把port和pin合成一个字节
+        for ( *cfg = io_cfg->io_list;   cfg < io_cfg->io_cnt + io_cfg->io_list;   cfg++) 
+                pin = AD_LCDC_COMPACT_PINS(cfg->port, cfg->pin);
+               
+                 if (type != AD_LCDC_LATCH_TYPE_CTRL_SIG) 
+                        continue;
+                
+                //设置lcd的spi引脚的方向和电平
+                hw_gpio_configure_pin(cfg->port, cfg->pin, cfg->on.mode, cfg->on.function, cfg->on.high);
+
+                //设置spi引脚的电源为3.3v
+                hw_gpio_configure_pin_power(cfg->port, cfg->pin, io_cfg->voltage_level);
+
+                //打开spi口的引脚开关
+                hw_gpio_pad_latch_enable(cfg->port, cfg->pin);
+ 
+---
+
+//待理解
+ ad_lcdc_get_pins(  **pin_list,  type)
+ 
+        switch (type) 
+
+        case AD_LCDC_LATCH_TYPE_CTRL_SIG:    //0
+                *pin_list = ad_lcdc_signal_gpios;
+                return sizeof(ad_lcdc_signal_gpios);
+
+        case AD_LCDC_LATCH_TYPE_EXT_CLK:  //1
+                *pin_list = ad_lcdc_ext_gpios;
+                return sizeof(ad_lcdc_ext_gpios);  
+ 
+
+-------
+
+//参数： conf.drv
+ad_lcdc_reconfig( handle, *conf )   //后面的conf有点误解，应该conf.drv
+
+        ad_lcdc_data_t *lcdc = (ad_lcdc_data_t *)handle;
+
+        HW_LCDC_STATUS    hw_status;
+
+        ret = AD_LCDC_ERROR_UNKNOWN;
+       
+
+        OS_MUTEX_GET(lcdc->busy, OS_MUTEX_FOREVER);   //或标记lcd为busy，跳过
+
+
+        //判断conf->drv->hw_init.phy_type
+        // 从 ad_lcdc_open  进来的，下面可以跳过 (肯定时可以配置的，并且是相等的)
+        if (lcdc->conf->drv)  
+                if (lcdc->conf->drv->hw_init.phy_type != conf->hw_init.phy_type)    //应该是考虑2个spi接口的情况
+                                                                                                                          后面的conf有点误解，应该是drv或conf.drv
+                        ret = AD_LCDC_ERROR_DRIVER_CONF_INVALID;
+                        goto end;
+  
+        //下面是关于系统时钟的设置，先跳过，忽略
+        if (conf->hw_init.iface_freq & HW_LCDC_CLK_PLL_BIT)        //如果bit31=1
+                status = cm_sys_clk_set(sysclk_PLL96);                          //关于系统时钟的设置
+                if (clk_status != cm_sysclk_success)  
+                        ret = AD_LCDC_ERROR_PLL_NOT_SET;
+                        goto end;
+ 
+
+        hw_status = hw_lcdc_init(&conf->hw_init);   //应是配置spi模式和频率等
+
+        OS_ASSERT(hw_status == HW_LCDC_OK);
+        if (hw_status != HW_LCDC_OK) 
+                goto restore_clock;
+ 
+
+        lcdc->data = &lcdc_dev_data;
+
+        //关于lcd显示，先跳过忽略
+        hw_lcdc_set_timing(&conf->display);
+
+        //或是关于显示时间设置，先跳过忽略
+        if (conf->hw_init.phy_type == HW_LCDC_PHY_JDI_PARALLEL || conf->hw_init.phy_type == HW_LCDC_PHY_CLASSIC_PARALLEL)  
+                hw_lcdc_jdi_parallel_set_timings(&conf->par_timings);
+   
+
+        //或是画lcd像素，先跳过忽略
+        if (lcdc->data->frame_valid) 
+                hw_lcdc_set_update_region(&lcdc->data->frame);
+ 
+        OS_MUTEX_PUT(lcdc->busy);    //或去掉lcd的busy，跳过
+ 
+
+-------
+
+//配置spi模式和频率等
+//参数：conf->hw_init
+hw_lcdc_init(  hw_lcdc_config_t *cfg)  //这里的cfg是conf->hw_init，确认这点以免混淆
+ 
+        HW_LCDC_MODE mode = HW_LCDC_MODE_DISABLE;
+        uint32_t          clk_sys_reg;
+ 
+
+        lcdc_data.phy = cfg->phy_type;
+
+        if (cfg->phy_type == HW_LCDC_PHY_NONE)  
+            
+                while (hw_lcdc_is_busy());     //取得lcd的busy状态
+
+                NVIC_DisableIRQ(LCD_CONTROLLER_IRQn);             //关闭lcd的irq
+                NVIC_ClearPendingIRQ(LCD_CONTROLLER_IRQn);    //清lcd的irq原来的标志
+
+                GLOBAL_INT_DISABLE();   //关闭全局中断
+
+                REG_SET_BIT(CRG_SYS, CLK_SYS_REG, LCD_RESET_REQ);
+
+
+                //下面是取得或计算新的clk_sys_reg，然后写入到CLK_SYS_REG
+                clk_sys_reg = CRG_SYS->CLK_SYS_REG;
+                REG_SET_FIELD(CRG_SYS, CLK_SYS_REG, LCD_RESET_REQ, clk_sys_reg, 0);
+                REG_SET_FIELD(CRG_SYS, CLK_SYS_REG, LCD_CLK_SEL, clk_sys_reg, 0);
+                REG_SET_FIELD(CRG_SYS, CLK_SYS_REG, LCD_ENABLE, clk_sys_reg, 0);
+                CRG_SYS->CLK_SYS_REG = clk_sys_reg;
+
+                GLOBAL_INT_RESTORE();  //恢复全局中断
+
+                return HW_LCDC_OK;
+        
+
+        GLOBAL_INT_DISABLE(); //关闭全局中断
+
+
+        //下面是取得或计算新的clk_sys_reg，然后写入到CLK_SYS_REG
+        clk_sys_reg = CRG_SYS->CLK_SYS_REG;
+        REG_SET_FIELD(CRG_SYS, CLK_SYS_REG, LCD_CLK_SEL, clk_sys_reg,
+                (cfg->iface_freq & HW_LCDC_CLK_PLL_BIT) ? 1 : 0);
+        REG_SET_FIELD(CRG_SYS, CLK_SYS_REG, LCD_ENABLE, clk_sys_reg, 1);
+        CRG_SYS->CLK_SYS_REG = clk_sys_reg;
+
+        GLOBAL_INT_RESTORE();  //恢复全局中断
+
+
+        //￥ =hw_lcdc_get_id()；
+             ￥ = REG_GETF(LCDC, LCDC_IDREG_REG, LCDC_ID);
+             ￥ =LCDC_LCDC_IDREG_REG；
+
+        if (￥!= LCDC_MAGIC)  
+
+                GLOBAL_INT_DISABLE();//关闭全局中断
+
+                REG_CLR_BIT(CRG_SYS, CLK_SYS_REG, LCD_ENABLE);
+                     CRG_SYS_CLK_SYS_REG &= ~(CRG_SYS_CLK_SYS_REG_LCD_ENABLE_Msk); //0x1UL,设置bit0=0
+
+                GLOBAL_INT_RESTORE();   //恢复全局中断
+
+                return HW_LCDC_ERR;
+        
+
+        //hw_lcdc_set_mode(HW_LCDC_MODE_DISABLE);
+            LCDC->LCDC_MODE_REG=0；
+
+        REG_SETF(LCDC, LCDC_INTERRUPT_REG, LCDC_IRQ_TRIGGER_SEL, 1);    //设置 LCDC_INTERRUPT_REG.31=1，作用？
+
+        hw_lcdc_enable_vsync_irq(false);                         //设置LCDC_INTERRUPT_REG.0=0，作用？
+        NVIC_EnableIRQ(LCD_CONTROLLER_IRQn);       //使能lcd控制中断
+
+       
+        hw_lcdc_set_iface_clk(
+                ((cfg->phy_type == HW_LCDC_PHY_CLASSIC_PARALLEL ?
+                        cfg->iface_freq : (cfg->iface_freq / 2)) - 1) & HW_LCDC_CLK_DIV_MSK);   //LCDC_CLKCTRL_REG.27=cfg->iface_freq
+
+
+        //根据不同的type，设置config和jdis_update_cmd  //待理解
+        switch (cfg->phy_type)  
+        case HW_LCDC_PHY_MIPI_SPI3:
+                lcdc_data.config = HW_LCDC_MIPI_CFG_RESET | HW_LCDC_MIPI_CFG_SPI3
+                        | HW_LCDC_MIPI_CFG_DMA | HW_LCDC_MIPI_CFG_TE_DIS;
+                break;
+        case HW_LCDC_PHY_MIPI_SPI4:
+                lcdc_data.config = HW_LCDC_MIPI_CFG_RESET | HW_LCDC_MIPI_CFG_SPI4
+                        | HW_LCDC_MIPI_CFG_DMA | HW_LCDC_MIPI_CFG_TE_DIS;
+                break;
+        case HW_LCDC_PHY_JDI_SPI:
+                lcdc_data.config = JDI_SERIAL_CFG_DEFAULT | SPI_PHY_CONFIG | HW_LCDC_MIPI_CFG_SPI4;
+                switch (cfg->format)  
+                case HW_LCDC_OCM_8RGB111_2:
+                        lcdc_data.jdis_update_cmd = HW_LCDC_JDIS_CMD_UPDATE_4BIT;
+                        break;
+                case HW_LCDC_OCM_RGB111:
+                        lcdc_data.jdis_update_cmd = HW_LCDC_JDIS_CMD_UPDATE_NATIVE;
+                        break;
+                case HW_LCDC_OCM_L1:
+                default:
+                        lcdc_data.jdis_update_cmd = HW_LCDC_JDIS_CMD_UPDATE_1BIT;
+                        break;
+                
+                break;
+        case HW_LCDC_PHY_SHARP_SPI:
+                lcdc_data.config = JDI_SERIAL_CFG_DEFAULT | SPI_PHY_CONFIG | HW_LCDC_MIPI_CFG_SPI4
+                        | HW_LCDC_MIPI_CFG_INV_ADDR;
+                lcdc_data.jdis_update_cmd = HW_LCDC_JDIS_CMD_UPDATE_NATIVE;
+                break;
+        case HW_LCDC_PHY_JDI_PARALLEL:
+                hw_lcdc_mipi_cfg_out(HW_LCDC_MIPI_CFG_JDI_SOFT_RST);
+                lcdc_data.config = HW_LCDC_MIPI_CFG_DMA | HW_LCDC_MIPI_CFG_RESET
+                        | HW_LCDC_MIPI_CFG_TE_DIS;
+                mode = HW_LCDC_MODE_JDIMIP | HW_LCDC_MODE_SCANDOUBLE;
+                break;
+        case HW_LCDC_PHY_CLASSIC_PARALLEL:
+                hw_lcdc_set_parallel_iface(HW_LCDC_PAR_IF_CLASSIC);
+                lcdc_data.config = HW_LCDC_MIPI_CFG_DMA | HW_LCDC_MIPI_CFG_RESET
+                        | HW_LCDC_MIPI_CFG_TE_DIS;
+                break;
+        case HW_LCDC_PHY_CUSTOM:
+                lcdc_data.config = 0;
+                break;
+        default:
+                return HW_LCDC_ERR;
+        }
+
+        lcdc_data.cb = NULL;
+
+        //把初始的config和刚才的config合并
+        lcdc_data.config ^= cfg->cfg_extra_flags;
+
+        //设置lcd的config
+        //hw_lcdc_mipi_cfg_out(lcdc_data.config | cfg->format);
+             LCDC->LCDC_DBIB_CFG_REG = cfg;         //设置config
+
+        //设置lcd的mode
+        //hw_lcdc_set_mode(mode ^ cfg->mode);
+               LCDC->LCDC_MODE_REG = mode;
+
+        return HW_LCDC_OK;
+ 
+----------
+
+//取得lcd的busy状态
+ hw_lcdc_is_busy(void)
+ 
+        lcdc_status_reg = LCDC->LCDC_STATUS_REG;
+        busy = false;
+
+        busy |= REG_GET_FIELD(LCDC, LCDC_STATUS_REG, LCDC_FRAMEGEN_BUSY, lcdc_status_reg) ?
+                                                                                            true :
+                                                                                            false;
+        busy |= REG_GET_FIELD(LCDC, LCDC_STATUS_REG, LCDC_DBIB_CMD_FIFO_EMPTY_N, lcdc_status_reg) ?
+                true : false;
+
+        return busy;
+ 
+
+=======================用lcd显示数据================================
+
+//lcd显示
+dev_draw( dev, *layer)
+
+        //取得系统时间
+        time = OS_GET_TICK_COUNT();
+
+        //发送一个lcd指令  //待理解
+        hw_lcdc_mipi_cmd(HW_LCDC_MIPI_CMD, 0x5C);
+
+        //通过spi引脚，向lcd写入数据或图像
+        ad_lcdc_draw_screen_async(dev, layer, frame_update_cb, &frame_update_cb_data);
+
+        OS_ASSERT(OS_EVENT_SIGNALED == OS_EVENT_WAIT(frame_update_cb_data.event, OS_MS_2_TICKS(1000)));
+
+
+        //再取得系统时间，算出一共运行了多少时间
+        fps = 10000 / OS_TICKS_2_MS(OS_GET_TICK_COUNT() - time);
+
+
+---
+
+//通过spi引脚，向lcd写入数据或图像
+参数：handle是spidev，layer是图像数据，cb是回调函数，
+ad_lcdc_draw_screen_async( handle,  *layer,  cb,  *user_data)
+
+        *lcdc = (ad_lcdc_data_t *)handle;
+
+        lcdc->callback = cb;                          //回调函数
+        lcdc->callback_data = user_data;      //用户数据   --待理解
+
+        hw_lcdc_set_layer(true, layer);
+
+        if (lcdc->conf->drv->te_enable)  //false
+                //ad_lcdc_enable_tearing(lcdc->conf->drv->te_polarity, ad_lcdc_tearing_async_callback, lcdc);
+       
+        else
+                ad_lcdc_send_one_frame(ad_lcdc_async_callback, lcdc);    //执行这一句
+      
+
+-----
+
+hw_lcdc_send_one_frame( )
+
+        HW_LCDC_MODE mode = LCDC->LCDC_MODE_REG;
+
+        switch (lcdc_data.phy)      //phy=HW_LCDC_PHY_CUSTOM, 所以执行下面的default
+
+        case HW_LCDC_PHY_MIPI_SPI3:
+        case HW_LCDC_PHY_MIPI_SPI4:
+
+                hw_lcdc_mipi_start_frame_transfer();
+                break;
+        case HW_LCDC_PHY_JDI_SPI:
+      
+                uint8_t starty = lcdc_data.active_area.starty + 1;
+
+                hw_lcdc_mipi_cmd(HW_LCDC_MIPI_CMD, lcdc_data.jdis_update_cmd);
+                hw_lcdc_mipi_cmd(HW_LCDC_MIPI_STORE_BADDR, starty);
+                break;
+      
+        case HW_LCDC_PHY_SHARP_SPI:
+     
+                uint8_t starty = lcdc_data.active_area.starty + 1;
+
+
+                hw_lcdc_mipi_cmd(HW_LCDC_MIPI_CMD, lcdc_data.jdis_update_cmd);
+                hw_lcdc_mipi_cmd(HW_LCDC_MIPI_STORE_BADDR, byte_reverse(starty));
+                break;
+       
+        default:
+
+//printf("___one_frame--04");
+                break;
+      
+        hw_lcdc_set_mode(mode | HW_LCDC_MODE_ONE_FRAME);
+
+
+-----
+//设置lcd图层的相关，坐标位置，格式等
+hw_lcdc_set_layer( enable,  *layer)
+
+        if (1) 
+                uint16_t disp_resx, disp_resy;
+                uint8_t pixels_per_word = LCDC_WORD_BITS / format_size_bits(layer->format);
+                int16_t stride = layer->stride;
+                uint32_t addr = black_orca_phy_addr(layer->baseaddr);
+                uint32_t resx = layer->resx;
+                uint32_t resy = layer->resy;
+                int16_t sx = layer->startx - lcdc_data.active_area.startx;
+                int16_t sy = layer->starty - lcdc_data.active_area.starty;
+                uint32_t szx, szy;
+                int16_t offset = 0;
+                int endx, endy;
+
+                //如果是HW_LCDC_PHY_JDI_PARALLEL，则先下面计算 （应该不是，跳过忽略）
+                if (lcdc_data.phy == HW_LCDC_PHY_JDI_PARALLEL)      
+                        if (sy >= 0) 
+                                sy *= 2;
+                                resy *= 2;                       
+                        else  
+                                resy = resy * 2 + sy;
+
+
+                //-----------------------下面是lcd坐标位置的计算，跳过忽略------------------------------------
+                szx = resx;
+                szy = resy;
+                endx = sx + resx;
+                endy = sy + resy;
+
+                get_resolution(&disp_resx, &disp_resy);
+
+                if (stride == 0)  
+                        stride = hw_lcdc_stride_size(layer->format, layer->resx);               
+
+                if ((int)sx >= (int)disp_resx  || (int)sy >= (int)disp_resy || endx <= 0  || endy <= 0)  
+                        set_layer_mode(false, 0);
+                        return false;               
+
+                if (endx > (int)disp_resx) 
+                        endx = disp_resx;
+              
+                if (endy > (int)disp_resy) 
+                        endy = disp_resy;
+             
+
+                if (sy < 0) 
+                        addr -= sy * stride;
+                        szy = endy;
+                        resy = endy;
+                        sy = 0;                
+                else 
+                        szy = endy - sy;
+                        resy = endy - sy;               
+
+                if (sx > 0) 
+                        szx = endx - sx;
+                        if (endx >= (int)disp_resx) 
+                                resx = ((((disp_resx - sx) - 1) / pixels_per_word) + 1)
+                                        * pixels_per_word;                        
+                        else 
+                                resx = szx;      
+                else
+                        //offset is negative
+                        offset = (sx % pixels_per_word);
+                        addr += (-sx) / pixels_per_word * 4;
+                        sx = 0;
+                        szx = endx;
+                        resx = CEILING_FUNC(szx + (-offset), pixels_per_word) * pixels_per_word;
+              
+                //-----------------------lcd坐标位置的计算，跳过忽略-----end--------------------------------
+
+
+                set_layer_base_addr(addr);
+                set_layer_start(sx, sy);
+                set_layer_offset_dma_prefetch(offset, layer->dma_prefetch_lvl);
+                set_layer_size(szx, szy);
+                set_layer_resolution(resx, resy);
+
+                /* Permit change of stride only if continuous mode is off */
+                if (!REG_GETF(LCDC, LCDC_MODE_REG, LCDC_MODE_EN)) 
+                        set_layer_stride(stride);
+              
+       
+        set_layer_mode(enable, layer->format);
+        return enable;
+
+
+---
+
+参数；0，0x5c
+hw_lcdc_mipi_cmd( type,  value)
+
+        //如果是这两个指令，则为1
+        cmd_bit = (type == HW_LCDC_MIPI_CMD || type == HW_LCDC_MIPI_STORE_BADDR) ? 1 : 0;
+
+
+        /* Workaround for "Errata issue 285": LCD_SPI_DC not aligned correctly with the LCD_SPI_CLK */
+
+        /* If SPI4 and not using hold and type changes wait until FIFO is empty. In any other case
+         * wait until there is an empty space in FIFO */
+
+        if (((LCDC->LCDC_DBIB_CFG_REG
+                & (REG_MSK(LCDC, LCDC_DBIB_CFG_REG, LCDC_DBIB_SPI_HOLD)
+                        | REG_MSK(LCDC, LCDC_DBIB_CFG_REG, LCDC_DBIB_SPI4_EN)))
+                != REG_MSK(LCDC, LCDC_DBIB_CFG_REG, LCDC_DBIB_SPI4_EN))
+                || (REG_GETF(LCDC, LCDC_DBIB_CMD_REG, LCDC_DBIB_CMD_SEND) == cmd_bit))  
+
+                while (REG_GETF(LCDC, LCDC_STATUS_REG, LCDC_DBIB_CMD_FIFO_FULL));    //等待fifo有空余空间
+       else
+                while (REG_GETF(LCDC, LCDC_STATUS_REG, LCDC_DBIB_CMD_PENDING));     //等待所有中断标志全部执行完
+     
+
+        REG_SET_FIELD(LCDC, LCDC_DBIB_CMD_REG, LCDC_DBIB_CMD_SEND, lcdc_dbib_cmd_reg, cmd_bit);  //reg.30=cmd-bit
+
+        REG_SET_FIELD(LCDC, LCDC_DBIB_CMD_REG, LCDC_DBIB_CMD_STORE, lcdc_dbib_cmd_reg,           //reg.27=0
+                type == HW_LCDC_MIPI_STORE_BADDR ? 1 : 0);
+
+        REG_SET_FIELD(LCDC, LCDC_DBIB_CMD_REG, LCDC_DBIB_CMD_VAL, lcdc_dbib_cmd_reg, value);    //reg.0=0x5c
+
+        LCDC->LCDC_DBIB_CMD_REG = lcdc_dbib_cmd_reg;
+
+
+
+
+
+
+
+ 
+
+
+

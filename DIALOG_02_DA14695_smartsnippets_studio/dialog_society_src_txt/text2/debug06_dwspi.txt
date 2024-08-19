@@ -1,0 +1,566 @@
+
+
+SPI flow（总）：
+
+    system_init --> prvSetupHardware --> periph_init  -->(output_gpio_cfg) --> app_gpio_pins_set_active
+
+    Deca_task --> ad_spi_io_config --> ad_spi_open--> (spi_dev ) --> dwt_writetodevice --> dwt_readfromdevice   
+
+    dwt_readfromdevice --> dwt_xfer3000  -->  readfromspi  -->  ad_spi_write_read 
+
+
+
+
+
+=======================spi引脚配置初始化=======================
+
+flow：   
+   system_init --> prvSetupHardware --> periph_init  -->(output_gpio_cfg) --> app_gpio_pins_set_active
+
+--------------------------------------------------------------------
+ 
+
+ system_init( *pvParameters) 
+
+       //外设和io口设置
+       prvSetupHardware(); 
+
+        //创建SPI应用任务Deca_Task
+        OS_TASK_CREATE( "deca_Handle",       
+                        Deca_Task,                 
+                        NULL,                         
+                        2048,                                                      
+                        5,       
+        OS_ASSERT(task_daca_h);    
+
+
+-----------
+
+prvSetupHardware(  )
+
+         //初始化dw3000的spi引脚，设置io口的方向，电平，功能，电源，打开io口的开关
+        //pm_system_init(periph_init);
+              app_gpio_pins_set_active((gpio_config *)output_gpio_cfg, HW_GPIO_POWER_V33);
+
+
+
+---
+
+//初始化dw3000的spi引脚，设置io口的方向，电平，功能，电源，打开io口的开关
+参数： output_gpio_cfg， V33
+app_gpio_pins_set_active(*gpio_list,  pin_power)
+ 
+        //开启io口配置，跳过忽略
+        hw_sys_pd_com_enable();
+
+        //逐个配置spi的引脚
+        while (gpio_list->pin != 0xFF) 
+
+                port = APP_GPIO_GET_PORT(gpio_list->pin);
+                pin  = APP_GPIO_GET_PIN(gpio_list->pin);
+
+                if (port < HW_GPIO_NUM_PORTS || pin < hw_gpio_port_num_pins[port]) 
+                        hw_gpio_configure_pin(port, pin, gpio_list->mode, gpio_list->func, gpio_list->high);   //设置io口的方向，电平，功能
+                        hw_gpio_configure_pin_power(port,  pin, pin_power);  //设置io口的电源为3v3
+                        hw_gpio_pad_latch_enable(port,pin);                           //打开io口的开关
+                
+                gpio_list++;    
+ 
+ 
+=======================spi打开设备，读写操作=======================
+ 
+flow：   
+         Deca_task --> ad_spi_io_config --> ad_spi_open--> (spi_dev ) --> dwt_writetodevice --> dwt_readfromdevice  
+
+
+-------------------------------------
+
+Deca_Task( void *pvParameters )
+ 
+
+        //-------------dw1000 ini------------------------------
+
+
+           //开启io口配置，跳过忽略
+           hw_sys_pd_com_enable();
+
+           //初始化spi的io口, 关闭spi功能
+           ad_spi_io_config( ( (ad_spi_controller_conf_t *) DECA_DEVICE)->id,  ( (ad_spi_controller_conf_t *)DECA_DEVICE)->io, 0 );
+
+           //关闭io口配置，跳过忽略
+           hw_sys_pd_com_disable();
+
+
+           //SPI初始化，创建spi的event和busy  //待理解，先跳过  （注释后也可正常工作）
+           ad_spi_init();
+
+
+           //DW3000 RESET （重启dw3000）
+           hw_gpio_configure_pin(DW_RST_PORT, DW_RST_PIN, HW_GPIO_MODE_OUTPUT, HW_GPIO_FUNC_GPIO, 0);
+           hw_gpio_set_inactive(DW_RST_PORT, DW_RST_PIN); //0,12
+           da_delay_count(100000);
+
+           hw_gpio_configure_pin(DW_RST_PORT, DW_RST_PIN, HW_GPIO_MODE_INPUT, HW_GPIO_FUNC_GPIO, 0);
+           da_delay_count(10000);
+
+
+       //-------------dw1000 ini--------end----------------------
+
+
+        for ( ;; ) 
+ 
+                static  uint32_t DELAYGAP =3200;    
+                uint8_t ibuf[4]={0};
+                uint8_t ibuf2[4]={0};
+                static  uint32_t idecacount =0 ;
+ 
+                OS_DELAY_MS(2);
+ 
+                if(idecacount++>=10)
+                
+                   idecacount=0;
+                   printf("run...\r\n");
+
+                   hw_gpio_toggle(0, 19);
+
+
+                   //--------------spi readwrite test ------------------------------
+
+                      spi_dev = ad_spi_open((ad_spi_controller_conf_t *)DECA_DEVICE);
+                      //--printf("dev:%d\r\n",spi_dev);   //--test
+
+                      //--------01------------
+
+                      ibuf2[0]=0x06;
+                      ibuf2[1]=0x06;
+                      ibuf2[2]=0x06;
+                      ibuf2[3]=0x06;
+
+                      dwt_writetodevice(0x0c,0x00,4,ibuf2);
+                      OS_DELAY_MS(50);
+
+                      //--ad_spi_deactivate_cs(spi_dev);
+                      //--d_spi_activate_cs(spi_dev);
+
+                      //memset(ibuf,0,4);
+                      ibuf[0]=0x0;
+                      ibuf[1]=0x0;
+                      ibuf[2]=0x0;
+                      ibuf[3]=0x0;
+                      dwt_readfromdevice(0x0c,0x00,4,ibuf);
+                      //dwt_readfromdevice(0x0c,0x00,4,ibuf);  //dw3000 device id
+                      OS_DELAY_MS(50);
+
+                      printf("val: %x\r\n",ibuf[0]);
+                      printf("val: %x\r\n",ibuf[1]);
+                      printf("val: %x\r\n",ibuf[2]);
+                      printf("val: %x\r\n",ibuf[3]);
+
+
+                      //ad_spi_deactivate_cs(spi_dev);
+                      //ad_spi_activate_cs(spi_dev);
+
+
+                      //--------02------------
+
+                      ibuf2[0]=0x09;
+                      ibuf2[1]=0x09;
+                      ibuf2[2]=0x09;
+                      ibuf2[3]=0x09;
+
+                      dwt_writetodevice(0x0c,0x00,4,ibuf2);
+                      OS_DELAY_MS(50);
+
+                      //ad_spi_deactivate_cs(spi_dev);
+                      //ad_spi_activate_cs(spi_dev);
+
+                      ibuf[0]=0x0;
+                      ibuf[1]=0x0;
+                      ibuf[2]=0x0;
+                      ibuf[3]=0x0;
+                      dwt_readfromdevice(0x0c,0x00,4,ibuf);
+                      OS_DELAY_MS(10);
+
+                      printf("val2: %x\r\n",ibuf[0]);
+                      printf("val2: %x\r\n",ibuf[1]);
+                      printf("val2: %x\r\n",ibuf[2]);
+                      printf("val2: %x\r\n\r\n",ibuf[3]);
+
+                      //ad_spi_deactivate_cs(spi_dev);  OS_DELAY_MS(50);
+                      ad_spi_close(spi_dev, true);
+
+
+                      //--------------spi readwrite test --end----------------------------
+
+
+
+-----------------
+
+
+//参数：SPIDEV
+ad_spi_handle_t ad_spi_open(  *conf)
+
+        ad_spi_data_t *spi = ((conf->id == HW_SPI1) ? &spi1_data : &spi2_data);
+
+        pm_sleep_mode_request(pm_mode_idle);
+
+        RES_ID res_id = ((conf->id == HW_SPI1) ? RES_ID_SPI1 : RES_ID_SPI2);
+
+         dma_channel = 0;      //dma通道
+
+        sys_sw_bsr_acquire(SW_BSR_MASTER_SYSCPU,                                                    //待理解
+                (conf->id == HW_SPI1) ? BSR_PERIPH_ID_SPI1 : BSR_PERIPH_ID_SPI2);
+
+        ad_spi_res_acquire(res_id, dma_channel);         //待理解
+
+        hw_sys_pd_com_enable();  
+
+       //配置spi的io口
+       ad_spi_internal_io_config(conf->id, conf->io, AD_IO_CONF_ON)  ;
+
+       hw_sys_pd_com_disable();  
+
+        spi->owner = OS_GET_CURRENT_TASK();
+
+        OS_ENTER_CRITICAL_SECTION();
+        hw_spi_enable(conf->id, 1);               //待理解
+        OS_LEAVE_CRITICAL_SECTION();
+
+        spi->conf = conf;
+
+        //配置spi的驱动（频率,模式，相位等）
+        ad_spi_reconfig(spi, conf->drv)  ；
+
+
+        return spi; 
+
+
+----
+
+配置spi引脚，sck，mo，mi，cs的电源，方向，电平
+参数：  HW-SPI1, io ，1
+ad_spi_internal_io_config(  id,   *io,  state) 
+
+        gpio = (ad_io_conf_t *) io;
+
+        //配置spi引脚，sck，mo，mi的电源，方向，电平
+        for (i = 0; i < 3; i++)  
+   
+                   hw_gpio_configure_pin_power(gpio->port, gpio->pin, io->voltage_level); 
+                  hw_gpio_configure_pin(gpio->port,gpio->pin, gpio->on.mode, gpio->on.function, gpio->on.high);
+                  hw_gpio_pad_latch_enable(gpio->port, gpio->pin);        
+               
+                 gpio++;
+
+        //同理，配置所有cs线的电源，方向，电平
+        gpio = (ad_io_conf_t*)io->spi_cs;
+        for (i = 0; i < io->cs_cnt; i++)  
+                if (AD_SPI_GPIO_VALID(gpio->port,gpio->pin)) 
+                        hw_gpio_configure_pin_power(gpio->port, gpio->pin, io->voltage_level);
+                        if (state == AD_IO_CONF_ON)  
+                                hw_gpio_configure_pin(gpio->port,gpio->pin, gpio->on.mode, gpio->on.function, gpio->on.high);
+                                hw_gpio_pad_latch_enable(gpio->port, gpio->pin);
+                         
+                        else 
+                                hw_gpio_configure_pin(gpio->port,gpio->pin, gpio->off.mode,  gpio->off.function, gpio->off.high);
+                                hw_gpio_pad_latch_disable(gpio->port, gpio->pin);                       
+                
+                gpio++;
+         
+        return AD_SPI_ERROR_NONE;
+ 
+
+---
+
+ //配置spi的驱动（频率,模式，相位等）
+参数：  spidata,  drv
+ad_spi_reconfig(handle,   *drv_conf)
+ 
+        ad_spi_data_t *spi = (ad_spi_data_t *) handle;  
+
+        OS_MUTEX_GET(spi->busy, OS_MUTEX_FOREVER);
+ 
+ 
+        if (spi->conf->drv->spi.rx_dma_channel != drv_conf->spi.rx_dma_channel) 
+                ASSERT_WARNING(0);
+                OS_MUTEX_PUT(spi->busy);
+                return AD_SPI_ERROR_CONFIG_DMA_CHANNEL_INVALID;
+       
+
+        if (spi->conf->drv->spi.tx_dma_channel != drv_conf->spi.tx_dma_channel)  
+                ASSERT_WARNING(0);
+                OS_MUTEX_PUT(spi->busy);
+                return AD_SPI_ERROR_CONFIG_DMA_CHANNEL_INVALID;
+         
+
+        if (spi->conf->drv->spi.smn_role != drv_conf->spi.smn_role)  
+                ASSERT_WARNING(0);
+                OS_MUTEX_PUT(spi->busy);
+                return AD_SPI_ERROR_CONFIG_SPI_ROLE_INVALID;
+         
+
+          //检查cs是否是已配置的    //待理解
+        if (spi->conf->drv->spi.smn_role == HW_SPI_MODE_MASTER)  
+                uint8_t cs_cnt = spi->conf->io->cs_cnt;
+                const ad_io_conf_t* cs_ports = spi->conf->io->spi_cs;
+                uint8 cs_configured = 0;
+                uint8_t i = 0;
+
+                for (i = 0; i< cs_cnt; i++) 
+                        cs_configured = ((cs_ports->port == drv_conf->spi.cs_pad.port) &&
+                                (cs_ports->pin == drv_conf->spi.cs_pad.pin));
+                        if (cs_configured )  
+                                break;
+                        
+                        cs_ports++;
+               
+                if (!cs_configured)  
+                        ASSERT_WARNING(0);
+                        OS_MUTEX_PUT(spi->busy);
+                        return AD_SPI_ERROR_CONFIG_SPI_CS_INVALID;
+ 
+        ////通过寄存器配置spi的频率,模式，相位
+        hw_spi_init(spi->conf->id, &drv_conf->spi);
+
+        OS_MUTEX_PUT(spi->busy);
+ 
+ ------------
+//通过寄存器配置spi的频率,模式，相位
+参数： HW_SPI1， drv->spi
+hw_spi_init( id,  *cfg)
+ 
+        SPI_Data *spid = SPIDATA(id);
+
+        hw_spi_init_clk_reg(id);
+
+        /* Workaround for "Errata issue 275": SPI needs proper reset sequence */
+        hw_spi_enable(id, false);
+        HW_SPI_REG_SETF(id, SPI_CTRL_REG, SPI_MINT, false);
+
+        HW_SPI_REG_SETF(id, SPI_CTRL_REG, SPI_WORD, cfg->word_mode);
+        HW_SPI_REG_SETF(id, SPI_CTRL_REG, SPI_SMN, cfg->smn_role);
+        HW_SPI_REG_SETF(id, SPI_CTRL_REG, SPI_POL, cfg->polarity_mode);
+        HW_SPI_REG_SETF(id, SPI_CTRL_REG, SPI_PHA, cfg->phase_mode);
+        HW_SPI_REG_SETF(id, SPI_CTRL_REG, SPI_CLK, cfg->xtal_freq);
+        ASSERT_WARNING((cfg->fifo_mode == HW_SPI_FIFO_RX_TX) ||
+                       (cfg->fifo_mode == HW_SPI_FIFO_NONE));
+        HW_SPI_REG_SETF(id, SPI_CTRL_REG, SPI_FIFO_MODE, cfg->fifo_mode);
+        HW_SPI_REG_SETF(id, SPI_CTRL_REG, SPI_DMA_TXREQ_MODE, 0);
+
+        // enable SPI block (if needed)
+        hw_spi_enable(id, cfg->disabled ? 0 : 1);
+
+        // set SPI CS pad
+        spid->cs_pad.port = cfg->cs_pad.port;
+        spid->cs_pad.pin = cfg->cs_pad.pin;
+ 
+        spid->use_dma = cfg->use_dma;
+        if (spid->use_dma)  
+                if (cfg->fifo_mode == HW_SPI_FIFO_NONE) 
+                        hw_spi_set_quick_dma_txreq(id);
+               
+                hw_spi_set_dma_channels(id, cfg->rx_dma_channel, HW_DMA_PRIO_2);
+ 
+        hw_spi_set_cs_ctrl(id, !cfg->ignore_cs);
+
+
+-----
+
+//初始化spi的io口, 关闭spi功能
+//参数列表；  id = SPI1,    io= MI, MO, SLK, CS  （id的参数没有用到，可去掉）
+ad_spi_io_config( id, *io,  0)      //id的参数没有用到，可去掉
+
+        *gpio =  io;
+
+        hw_sys_pd_com_enable();
+
+        //设置spi的clk，mo，mi的电源，方向，电平，功能
+        for (i = 0; i < 3; i++) 
+               
+                        //设置io口电源为3.3V
+                        hw_gpio_configure_pin_power(gpio->port, gpio->pin, io->voltage_level);
+
+                        //if (state == 1) 
+                        //        hw_gpio_configure_pin(gpio->port,gpio->pin, gpio->on.mode,
+                        //                                            gpio->on.function, gpio->on.high);
+                         
+                       if (state == 0) 
+                                hw_gpio_configure_pin(gpio->port,gpio->pin, gpio->off.mode,   //设置io口的功能，方向，电平
+                                                                    gpio->off.function, gpio->off.high);                        
+
+                        hw_gpio_pad_latch_enable(gpio->port, gpio->pin);     //打开io口门锁
+                        hw_gpio_pad_latch_disable(gpio->port, gpio->pin);     //关闭io口门锁            
+
+                       gpio++;     
+
+        //设置所有cs口的电源，方向，电平，功能
+        gpio = io->spi_cs;
+
+        for (i = 0; i < io->cs_cnt; i++)  
+
+                         //设置io口电源为3.3V
+                        hw_gpio_configure_pin_power(gpio->port, gpio->pin, io->voltage_level);
+
+                       if (state == 0) //空闲时，配置成普通io口
+                                hw_gpio_configure_pin(gpio->port,gpio->pin, gpio->off.mode,    //设置io口的功能，方向，电平
+                                        gpio->off.function, gpio->off.high); 
+
+                        hw_gpio_pad_latch_enable(gpio->port, gpio->pin);     //打开io口门锁
+                        hw_gpio_pad_latch_disable(gpio->port, gpio->pin);     //关闭io口门锁   
+                
+                      gpio++;     
+
+        hw_sys_pd_com_disable();
+
+        return AD_SPI_ERROR_NONE;
+
+ 
+----------
+
+//SPI初始化，创建spi的event和busy  //待理解，先跳过
+ad_spi_init()
+
+        OS_EVENT_CREATE(spi1_data.event);
+        OS_MUTEX_CREATE(spi1_data.busy);
+        OS_EVENT_CREATE(spi2_data.event);
+        OS_MUTEX_CREATE(spi2_data.busy);
+
+
+
+
+=======================spi引脚读写底层模块=======================
+
+flow：
+    dwt_readfromdevice --> dwt_xfer3000  -->  readfromspi  -->  ad_spi_write_read 
+
+
+----------------------
+
+Deca_Task( void *pvParameters )
+
+         for ( ;; ) 
+
+                      //打开dw3000的spi设备
+                      spi_dev = ad_spi_open((ad_spi_controller_conf_t *)DECA_DEVICE);
+                      //--printf("dev:%d\r\n",spi_dev);   //--test
+
+                      //从spi的寄存器中读取数值
+                      dwt_readfromdevice(0x0c,0x00,4,ibuf);  //dw3000 device id
+                      OS_DELAY_MS(50);
+
+                      printf("val: %x\r\n",ibuf[0]);
+                      printf("val: %x\r\n",ibuf[1]);
+                      printf("val: %x\r\n",ibuf[2]);
+                      printf("val: %x\r\n",ibuf[3]);
+
+
+------
+
+//从寄存器+偏移地址中，读取值
+dwt_readfromdevice( regFileID,  index,  length,  *buffer)
+        dwt_xfer3000(regFileID, index, length, buffer, DW3000_SPI_RD_BIT);  //生成header，body数据包，发送到spi引脚  
+
+ 
+-----
+
+//生成header，body数据包，发送到spi引脚  
+//参数： DEV_ID_ID=0
+//dw3000的地址，跟dw1000有一点不一样,dw1000的器件地址和子地址是分开的； 而dw3000是合并在一起的（对同一个reg00）
+//dw3000的地址，由三部分组成，总的子地址，mode，FAC.   //--待理解
+
+dwt_xfer3000( DEV_ID_ID, indx,   length, *buffer,   mode)
+ 
+    uint8  header[2];           
+    uint16 cnt = 0;          
+    uint16  addr;
+
+    //--uint16 reg_file     = 0x1F & (  (regFileID + indx) >> 16  ) ;   //对REG00中的DEV_ID_ID，SYS_CFG_ID 来讲，这句可以去掉或忽略，结果为0
+    uint16 reg_offset   = 0x7F &  (regFileID + indx);    //reg_offset是把器件地址和子地址合在一起组成一个总的子地址 （子地址是连续的）
+
+    addr = (reg_file << 9) | (reg_offset << 2);   // 低2位，用于放mode
+
+    header[0] = (mode | addr) >> 8;               //  mode.15 + reg_offset.6-12(高半部地址)     //--待理解
+    header[1] =addr | (mode & 0x03);             // reg_offset.0-5左移2位（低半部地址） ＋ mode.0-1, 把模式放在子地址的后面  --easy
+
+    if (length == 0) 
+
+        //--header[0] = (DW3000_SPI_WR_BIT>>8) | (regFileID<<1) | DW3000_SPI_FAC ;
+        header[0] = 0X80 | DW3000_SPI_FAC ;                      //   W(bit7=1) + FAC(bit6=0,bit0=1)，  FAC待理解
+
+        cnt = 1;
+   
+    else if (reg_offset == 0  && (mode == DW3000_SPI_WR_BIT || mode == DW3000_SPI_RD_BIT))
+        header[0] |= DW3000_SPI_FARW;    //把head[0]的bit0和bit6都置0   //--待理解
+        cnt = 1;
+
+    else
+        header[0] |= DW3000_SPI_EAMRW;    //把head[0]的bit6都置1   //--待理解
+        cnt = 2;  
+
+
+    switch (mode)
+
+      case    DW3000_SPI_WR_BIT:
+          //向寄存器中写入数值
+          writetospi(cnt, header, length, buffer);
+          break;
+
+
+      case DW3000_SPI_RD_BIT:
+            //读取寄存器中的数值
+            readfromspi(cnt, header, length, buffer);
+            break;
+
+
+----
+
+//读取寄存器中的数值
+readfromspi( headerLength, *headerBuffer,  readLength, *readBuffer)
+
+    u8     m_tx_buf[256];         
+    u8     m_rx_buf[256];          
+    u8     m_length; 
+
+    memmove(m_tx_buf, headerBuffer, headerLength);
+    memset(m_tx_buf + headerLength , 0x00, readLength);
+    m_length = headerLength + readLength;
+ 
+    ad_spi_activate_cs(spi_dev);   //打开cs脚
+
+    //通过dialog的spi驱动读取数值
+    ad_spi_write_read(spi_dev, m_tx_buf, m_rx_buf, m_length);
+
+    memmove(readBuffer, m_rx_buf + headerLength, readLength);
+
+    ad_spi_deactivate_cs(spi_dev);  //关闭cs脚
+
+
+
+－－－－－－－－－－－－－－－－－－－－－－－－－－－－－－－
+
+
+//直接往寄存器写入数据
+void dwt_write16bitoffsetreg(int regFileID, int regOffset, uint16 regval)
+{
+    uint8   buffer[2] ;
+
+    buffer[0] = regval & 0xFF;
+    buffer[1] = regval >> 8 ;
+
+    dwt_writetodevice(regFileID,regOffset,2,buffer);
+} // end dwt_write16bitoffsetreg()
+
+//把数据通过与，或方式添加到寄存器原来的数据上去
+void dwt_modify16bitoffsetreg(const int regFileID, const int regOffset, const uint16 _and, const uint16 _or)
+{
+    uint8 buf[4];
+    buf[0] = (uint8)_and;//       &0xFF;
+    buf[1] = (uint8)(_and>>8);//  &0xFF;
+    buf[2] = (uint8)_or;//        &0xFF;
+    buf[3] = (uint8)(_or>>8);//   &0xFF;
+    dwt_xfer3000(regFileID, regOffset, sizeof(buf), buf, DW3000_SPI_AND_OR_16);
+}
+
+
+
+

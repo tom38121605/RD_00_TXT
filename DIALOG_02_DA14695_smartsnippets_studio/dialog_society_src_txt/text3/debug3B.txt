@@ -1,0 +1,20 @@
+
+// Structure for DTE data (results) 
+typedef struct __attribute__((packed)) 
+{
+        uint16_t  event_counter;
+        uint8_t   AGC_gain;
+        int8_t    ble_rssi;
+        int16_t   f_offset;
+        uint8_t   invalid_atoms;
+        uint8_t   reserved;     // ±¸ÓÃ
+        float     phase[DTE_N_ATOM_MAX];
+        uint16_t  amplitude[DTE_N_ATOM_MAX];
+} dte_result_t;
+
+
+
+=======================
+ 
+ 
+

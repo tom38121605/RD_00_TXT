@@ -1,0 +1,147 @@
+
+
+
+
+static void handle_evt_gap_conn_completed(ble_evt_gap_connection_completed_t *evt)
+ 
+   if (evt->status != BLE_STATUS_OK)  
+      OS_TASK_NOTIFY(proximity_task_h, PROX_CHECK_APP_NOTIFY, OS_NOTIFY_SET_BITS);
+   else 
+      sdt_connected_as_master = true;
+
+      OS_EVENT_SIGNAL(sdt_connection_event);        //触发已连接事件
+ 
+
+
+-------
+
+static void handle_evt_gap_adv_completed(ble_evt_gap_adv_completed_t *evt)
+ 
+   if (sdt_connected && !sdt_connected_as_master)    //如果已连接，且不是主机连接
+      ble_gattc_util_write_ccc(0x0, DTE_DATA_R_RESULT_NOTIFY_ENABLE, GATT_CCC_NOTIFICATIONS);
+      rf_ranging_responder_start();
+ 
+
+-----
+
+void handle_evt_gap_rfmon_report(ble_evt_gap_rfmon_report_t *report)
+ 
+   if (report->status != 0)  
+      update_dte_status(DTE_STATUS_STOP);
+      distance = 0;
+      return; // this is invalid data  
+
+   sampling_buffer_t *smpl_buf = (sampling_buffer_t *)report->smpl_buf;
+
+   /* Notify the application that a new report is ready.
+    * Since we only use one buffer for now the application
+    * can access the buffer through shared memory,
+    * otherwise a queue will be needed.
+    */
+   report_smpl_buf = smpl_buf;
+
+   if (sdt_connected_as_master) 
+      update_dte_status(DTE_STATUS_CALC);
+   else  
+      update_dte_status(DTE_STATUS_START);
+      update_dte_status(DTE_STATUS_CALC);
+ 
+
+--------
+
+static ble_error_t connect_to_bd_addr_and_trigger_ranging(const bd_address_t *addr, const gap_conn_params_t *conn_params)
+{
+   ble_error_t status = BLE_ERROR_BUSY;
+
+   sdt_connected = false;
+   sdt_connecting = true;
+   sdt_connected_as_master = false;
+
+   DBG_PRINTF(("...connecting..."));
+   if (sdt_advertising){
+      ble_gap_adv_stop();
+      /* wait for possible incoming connection already started ... */
+      OS_DELAY_MS(2 * FAST_ADV_SCAN_MAX);
+   }
+
+   if (sdt_connected || sdt_advertising) {
+      sdt_connecting = false;
+      return (status);
+   }
+
+   if (sdt_scanning){
+      ble_gap_scan_stop();
+      OS_DELAY_MS(10);
+   }
+
+   /* ... no incoming connection established, we are OK */
+
+   status = ble_gap_connect(addr, &cp);
+
+   if (status != BLE_STATUS_OK) {
+      sdt_connecting = false;
+      DBG_PRINTF(("%s: Connect command failed. Status=%d", __func__, status));
+      if (status == BLE_ERROR_BUSY) {
+         ble_gap_connect_cancel();
+      }
+      sdt_connecting = false;
+      return (status);
+   }
+
+   return (status);
+}
+
+
+---------------
+
+static void handle_evt_gattc_discover_svc(ble_evt_gattc_discover_svc_t *evt)
+{
+   if (memcmp(dte_service_uuid.uuid128, evt->uuid.uuid128, ATT_UUID_LENGTH) == 0) {
+      gDevToF = true;
+      gIsAnSDTDevice = true;
+   }
+
+   if (memcmp(xchange_info_service_uuid.uuid128, evt->uuid.uuid128, ATT_UUID_LENGTH) == 0) {
+      gIsAnSDTDevice = true;
+   }
+
+   services_discovered++;
+}
+
+--------------
+
+static void handle_evt_gattc_discover_completed(ble_evt_gattc_discover_completed_t *evt)
+{
+   if (gIsAnSDTDevice && services_discovered == SERVICES_TO_DISCOVER) {
+      OS_TASK_NOTIFY(sdt_task_h, RANGE_APP_NOTIFY, OS_NOTIFY_SET_BITS);
+   }
+}
+
+
+
+------------
+
+ble_error_t ble_gap_scan_stop(void)
+{
+        ble_mgr_gap_scan_stop_cmd_t *cmd;
+        ble_mgr_gap_scan_stop_rsp_t *rsp;
+        ble_error_t ret = BLE_ERROR_FAILED;
+
+        /* Create new command and fill it */
+        cmd = alloc_ble_msg(BLE_MGR_GAP_SCAN_STOP_CMD, sizeof(*cmd));
+
+        if (!ble_cmd_execute(cmd, (void **) &rsp, ble_mgr_gap_scan_stop_cmd_handler)) {
+                return BLE_ERROR_BUSY;
+        }
+
+        ret = rsp->status;
+        OS_FREE(rsp);
+
+        return ret;
+}
+
+
+
+
+
+

@@ -1,0 +1,119 @@
+
+
+
+ //创建任务 ： 任务名，任务函数，参数，内存大小，优先级，句柄
+     OS_TASK_CREATE("SysInit",  system_init,  0, 1024,  6,  handle );    
+
+//创建 定时器：定时器名，定时器周期，是否重复调用， 第4个参数待理解，定时器回调函数，h1应为定时器句柄之类
+     h1 = OS_TIMER_CREATE("btn_timer", OS_MS_2_TICKS(3000), 0,  OS_GET_CURRENT_TASK(), btn_timer_cb); 
+
+
+
+
+任务创建flow： 
+
+   main  -->   system_init  -->   sdt_ble_events_task  --> proximity_sw_fsm_task            
+   //ui_task_init  --> OS_TASK_CREATE( ui_task)  
+
+   main  -->   system_init  -->   sdt_ble_events_task  -->  alerts_n_logging_task
+              //wrbl_ht_ctrl_init --> OS_TASK_CREATE( health_toolbox_task)  
+
+
+   main  -->   system_init  -->   sdt_ble_events_task  -->  ranging_task 
+
+
+
+------------------
+
+      /* Notified from BLE Manager? */
+      if (notif & WARNING_ALERT_NOTIFY) {
+         num_of_beeps = NUM_OF_WARNING_ALERT_BEEPS;
+      }
+
+      if (notif & DANGER_ALERT_NOTIFY) {
+         num_of_beeps = NUM_OF_DANGER_ALERT_BEEPS;
+      }
+
+
+
+=============================参考===================================
+
+
+本工程主要包含下面4个任务，优先级分别如下：  （其他任务用到的时候再考虑）
+
+system_init   --  6
+wrbl_task     --  1
+ui_task         --  1 
+health_toolbox_task  -- 1
+
+
+===================================================================
+
+任务创建flow： 
+
+   main  -->   system_init  -->   wrbl_task  -->  ui_task_init  --> OS_TASK_CREATE( ui_task)  
+   main  -->   system_init  -->   wrbl_task  -->  wrbl_ht_ctrl_init --> OS_TASK_CREATE( health_toolbox_task)  
+
+-----------------------
+
+main()
+
+   OS_TASK_CREATE("SysInit",  system_init,  0, 1024,  6,  handle );              
+
+--- 
+
+system_init()
+
+    //创建主任务函数wrbl_task
+    OS_TASK_CREATE( "Wearable Application",  wrbl_task, NULL, 1000, 1,  handle);   
+
+---
+
+wrbl_task( *params) 
+
+    ui_task_init( )
+ 
+---
+
+
+ui_task_init()
+
+    //创建ui的任务 ui_task
+    OS_TASK_CREATE( "UI_TASK", ui_task, &ui, 1024, 1, ui.handle);
+
+
+
+---------------------------
+
+
+wrbl_task( *params) 
+
+    wrbl_ht_ctrl_init();
+
+ 
+---
+
+wrbl_ht_ctrl_init( )
+
+    ht_init(&ht_callbacks);    //包含多个回调函数   --待理解
+
+---
+
+ht_init() 
+   init()
+
+---
+
+init()
+    //health 工具任务
+    OS_TASK_CREATE("HToolbox Task",  health_toolbox_task, NULL,   1024,    1,   ht_task);   
+
+
+ 
+
+
+ 
+
+
+
+

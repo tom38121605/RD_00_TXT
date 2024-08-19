@@ -1,0 +1,343 @@
+
+
+
+------------------------------- 创建 system_init 任务  ------------------------------------
+
+main()
+
+   OS_TASK_CREATE("SysInit",  system_init,  0, 1024,  OS_TASK_PRIORITY_HIGHEST,  handle );              
+
+
+-------------------------------
+
+ //系统init函数
+ system_init( void *pvParameters )
+
+       prvSetupHardware();
+
+        OS_TASK_CREATE("BLE Range DTE",   
+                       ble_range_dte_task,              
+                       NULL,                          
+                       512 * OS_STACK_WORD_SIZE,        
+                       mainBLE_RANGE_DTE_TASK_PRIORITY,  
+                       handle); 
+
+
+-------------------------------
+
+void ble_range_dte_task(void *params)
+
+        printf("\n\rRange application: %s %s\n\r", APP_NAME, APP_VERSION);
+
+        //......
+        rfmon_init(true,NULL);
+
+
+        //设置主从机，相关参数
+        config_params_get(&cfg_params);
+             config_params_init(cfg);       //取得role等参数
+             config_params_print(cfg);    //打印role等参数
+
+        //检查K1按键，如果是按下的，就進入config模式
+        bool k1 = hw_k1_button_pressed();
+        dbg_printf("k1 button %d\r\n", hw_k1_button_pressed());
+        if (k1)
+                config_params_menu(&cfg_params);   //配置菜单
+
+                /* reboot after configuration to avoid issue with rf diagnostics irq not enabling
+                 * after clock has settled (about 8s)
+                 */
+                OS_DELAY_MS(1000);
+                hw_cpm_reboot_system();
+        else 
+                /* Register DTE statistics report on K1 button push */
+                hw_k1_button_wkup_init(dte_statistics_report);
+        
+
+
+        //......
+        cw_distance_offset = ((float) cfg_params.cw_offset) / 100;
+        dbg_printf("cw distance offset %.2f\r\n", cw_distance_offset);
+
+
+       //中间省略
+          。。。。。。。。。。。。。。。
+
+
+
+        if (cfg_params.role == DTE_ROLE_INITIATOR)  
+                ble_central_task((void *)&cfg_params.set_number);         //主机
+        else  
+                ble_peripheral_task((void *)&cfg_params.set_number);    //从机
+        
+
+ 
+
+
+
+--------------------------------------------------------------
+
+void ble_peripheral_task(void *params)
+
+        printf("Ble peripheral task started\r\n");
+        ble_peripheral_task_handle = OS_GET_CURRENT_TASK();
+
+        //不使用看门狗
+        wdog_id = sys_watchdog_register(false);
+
+        //关于距离算法的设置......
+        init_rfmon_report(ble_peripheral_task_handle);
+
+
+        //设置为从机
+        ble_gap_role_set(GAP_PERIPHERAL_ROLE);
+        ble_register_app(); 
+
+        //...... 
+        update_bd_address();
+
+
+        //关于设备名称...... 
+        printf("device name: %s\r\n", device_name);
+        ble_gap_device_name_set(device_name, ATT_PERM_READ);
+
+
+       //设置最大字节数 
+       ble_gap_mtu_size_set(512);
+
+
+        // 注册 custom DTE data服务 for 交换 DTE results  
+        dte_data_service_init();
+           ctx.svc.read_req = handle_read_req;   //读入距离等参数的函数
+           ctx.svc.write_req = handle_write_req;   //输出距离等参数的函数
+
+
+        //关于ctx...... 
+        ctx.dte_status = DTE_STATUS_STOP;
+        ctx.conn_idx = BLE_CONN_IDX_INVALID;
+        ctx.conf_set_number = *(uint8_t*)params;
+
+
+        //创建dte定时器
+        dte_timer = OS_TIMER_CREATE("dte", OS_MS_2_TICKS(MEAS_TO_MS), OS_TIMER_FAIL,
+                NULL, dte_timer_cb);
+        set_adv_data();
+
+        //开始广播
+        start_advertising();
+
+
+        for (;;)  
+
+                //关于看门狗......
+                sys_watchdog_notify(wdog_id);
+                sys_watchdog_suspend(wdog_id);
+
+                //取得任务标志
+                ret = OS_TASK_NOTIFY_WAIT(0, OS_TASK_NOTIFY_ALL_BITS, &notif, OS_TASK_NOTIFY_FOREVER);
+                OS_ASSERT(ret == OS_OK);
+
+                 //关于看门狗......
+                sys_watchdog_notify_and_resume(wdog_id);
+
+                 
+                if (notif & BLE_APP_NOTIFY_MASK)   //如果是BLE的任务
+                        ble_evt_hdr_t *hdr;
+
+                        hdr = ble_get_event(false);
+                        if (!hdr) 
+                                goto no_event;
+
+                        if (ble_service_handle_event(hdr)) 
+                                goto handled;
+                        
+
+                        switch (hdr->evt_code)  
+                        case BLE_EVT_GAP_RFMON_REPORT:
+                                handle_evt_gap_rfmon_report((ble_evt_gap_rfmon_report_t *) hdr);
+                                break;
+                        case BLE_EVT_GAP_CONNECTED:      //连接
+                                handle_evt_gap_connected((ble_evt_gap_connected_t *) hdr);
+                                break;
+                        case BLE_EVT_GAP_DISCONNECTED:  //断开连接
+                                handle_evt_gap_disconnected((ble_evt_gap_disconnected_t *) hdr);
+                                break;
+                        case BLE_EVT_GAP_ADV_COMPLETED:
+                                handle_evt_gap_adv_completed((ble_evt_gap_adv_completed_t *) hdr);
+                                break;
+                        default:
+                                ble_handle_event_default(hdr);
+                                break;
+
+handled:
+                        OS_FREE(hdr);
+
+no_event:
+                        // notify again if there are more events to process in queue
+                        if (ble_has_event()) 
+                                OS_TASK_NOTIFY(OS_GET_CURRENT_TASK(), BLE_APP_NOTIFY_MASK, eSetBits);                
+
+                if (notif & RFMON_REPORT_NOTIF)  
+                        update_dte_status(DTE_STATUS_START);
+                        update_dte_status(DTE_STATUS_CALC);
+                
+
+                if (notif & DTE_TO_NOTIF) 
+                        handle_dte_timeout();
+                
+
+------
+
+//从机默认事件处理
+void ble_handle_event_default(ble_evt_hdr_t *hdr)
+ 
+        switch (hdr->evt_code) 
+ 
+        case BLE_EVT_GAP_CONN_PARAM_UPDATE_REQ:
+         
+                ble_evt_gap_conn_param_update_req_t *evt = (ble_evt_gap_conn_param_update_req_t *) hdr;
+                ble_gap_conn_param_update_reply(evt->conn_idx, true);
+                break;         
+ 
+        case BLE_EVT_GAP_PAIR_REQ:
+        
+                ble_evt_gap_pair_req_t *evt = (ble_evt_gap_pair_req_t *) hdr;
+                ble_gap_pair_reply(evt->conn_idx, false, false);
+                break;        
+ 
+        case BLE_EVT_GATTS_READ_REQ:
+         
+                ble_evt_gatts_read_req_t *evt = (ble_evt_gatts_read_req_t *) hdr;
+                ble_gatts_read_cfm(evt->conn_idx, evt->handle, ATT_ERROR_READ_NOT_PERMITTED, 0, NULL);
+                break;
+        
+        case BLE_EVT_GATTS_WRITE_REQ:            //或是输出距离等参数  －－待验证
+        
+                ble_evt_gatts_write_req_t *evt = (ble_evt_gatts_write_req_t *) hdr;
+                ble_gatts_write_cfm(evt->conn_idx, evt->handle, ATT_ERROR_WRITE_NOT_PERMITTED);
+                break;
+         
+        case BLE_EVT_GATTS_PREPARE_WRITE_REQ:
+        
+                ble_evt_gatts_prepare_write_req_t *evt = (ble_evt_gatts_prepare_write_req_t *) hdr;
+                ble_gatts_prepare_write_cfm(evt->conn_idx, evt->handle, 0, ATT_ERROR_WRITE_NOT_PERMITTED);
+                break;
+        
+ 
+
+---------------------------------------
+
+static void dte_data_service_init(void)
+
+        ctx.svc.read_req = handle_read_req;   //读入距离等参数的函数
+        ctx.svc.write_req = handle_write_req;   //输出距离等参数的函数
+
+
+        //...........................................................................................................................
+
+        num_attr = ble_gatts_get_num_attr(0, 2, 1);
+
+        ble_uuid_from_string(UUID_DTE_DATA_SERVICE, &uuid);
+        ble_gatts_add_service(&uuid, GATT_SERVICE_PRIMARY, num_attr);
+
+        ble_uuid_from_string(UUID_DTE_DATA_I_RESULT, &uuid);
+        ble_gatts_add_characteristic(&uuid, GATT_PROP_WRITE | GATT_PROP_WRITE_NO_RESP, ATT_PERM_WRITE,
+                                                sizeof(dte_result_t), 0, NULL, &ctx.dte_i_result_val_h);
+
+        ble_uuid_from_string(UUID_DTE_DATA_R_RESULT, &uuid);
+        ble_gatts_add_characteristic(&uuid, GATT_PROP_NOTIFY, ATT_PERM_NONE,
+                                                sizeof(dte_result_t), 0, NULL, &ctx.dte_r_result_val_h);
+
+        ble_uuid_create16(UUID_GATT_CLIENT_CHAR_CONFIGURATION, &uuid);
+        ble_gatts_add_descriptor(&uuid, ATT_PERM_RW, sizeof(uint16_t), 0, &ctx.dte_r_result_ccc_h);
+
+        ble_gatts_register_service(&ctx.svc.start_h, &ctx.dte_i_result_val_h,
+                                                     &ctx.dte_r_result_val_h,
+                                                     &ctx.dte_r_result_ccc_h, 0);
+        ctx.svc.end_h = ctx.svc.start_h + num_attr;
+
+        ble_service_add(&ctx.svc);
+
+        //...........................................................................................................................
+
+
+---------------------------------------
+
+
+static void handle_write_req(ble_service_t *svc, const ble_evt_gatts_write_req_t *evt)
+ 
+        att_error_t status = ATT_ERROR_ATTRIBUTE_NOT_FOUND;
+
+        if (evt->handle == ctx.dte_i_result_val_h) 
+                if (evt->length == sizeof(dte_result_t))  
+                        handle_dte_results_write_req((dte_result_t *) evt->value);   //串口输出距离
+                        status = ATT_ERROR_OK;
+                  else  
+                        status = ATT_ERROR_INVALID_VALUE_LENGTH;
+ 
+
+        //......
+        if (evt->handle == ctx.dte_r_result_ccc_h)  
+                if (evt->length == sizeof(uint16_t))  
+                        status = ATT_ERROR_OK;
+                else  
+                        status = ATT_ERROR_INVALID_VALUE_LENGTH;
+  
+
+        if (status != ATT_ERROR_OK)  
+                printf("write error %d status %d\r\n", evt->handle, status);
+        
+        ble_gatts_write_cfm(evt->conn_idx, evt->handle, status);
+ 
+
+
+---
+
+
+//计算距离，串口输出距离
+static void handle_dte_results_write_req(dte_result_t *result)
+
+        if (ctx.dte_status == DTE_STATUS_CALC) 
+
+                memcpy(&i_result, result, sizeof(dte_result_t));
+
+                uint8_t dqf = 0;
+                float dist_corr = 0;
+                float distance = calc_distance(&i_result, &r_result, &dqf, &dist_corr);
+
+                /* update distance with cw offset */
+                distance = distance - cw_distance_offset;
+
+                float flt_dist = calc_filtered_distance(distance, dqf, &ctx.filter_state);
+
+                auto_xtal_trim(dqf, i_result.f_offset, 3.0); // i_result ???
+
+                exchange_mem_update_c_results(i_result.event_counter, distance);
+
+                printf("\n\r**** distance: %.2f, flt_dist: %.2f, dist_corr: %.2f, event: %d, fo_i: %d, fo_r: %d, agc_i: %d, agc_r: %d, dqf: %d, ia_i: %d, ia_r: %d",
+                        distance, flt_dist, dist_corr, i_result.event_counter, i_result.f_offset, r_result.f_offset, i_result.AGC_gain, r_result.AGC_gain, dqf,                         i_result.invalid_atoms, r_result.invalid_atoms);
+
+
+                printf(", i_rssi: %d, r_rssi: %d", i_result.ble_rssi, r_result.ble_rssi);
+
+
+                printf("\n\n\r");
+
+                display_str(dqf, flt_dist, 40, r_result.ble_rssi);
+
+
+                update_dte_status(DTE_STATUS_STOP);
+
+                /* wait for next start from initiator */
+         else 
+                printf("results received with status %d\r\n", ctx.dte_status);
+                if (ctx.dte_status != DTE_STATUS_STOP) {
+                        ctx.dte_err_code = DTE_ERROR_SYNC_FAILED;
+                        /* stop and wait next start from initiator */
+                        update_dte_status(DTE_STATUS_STOP);
+
+
+
+
+
+

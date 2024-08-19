@@ -1,0 +1,55 @@
+
+
+//periph_setup.h
+
+#define PSP27801_RW_PORT                        HW_GPIO_PORT_1
+#define PSP27801_RW_PIN                         HW_GPIO_PIN_9
+
+#define PSP27801_CS_PORT                        HW_GPIO_PORT_0
+#define PSP27801_CS_PIN                         HW_GPIO_PIN_20
+
+#define PSP27801_SCK_PORT                       HW_GPIO_PORT_0
+#define PSP27801_SCK_PIN                        HW_GPIO_PIN_21
+
+#define PSP27801_SDO_PORT                       HW_GPIO_PORT_0
+#define PSP27801_SDO_PIN                        HW_GPIO_PIN_24
+
+#define PSP27801_SDI_PORT                       HW_GPIO_PORT_0
+#define PSP27801_SDI_PIN                        HW_GPIO_PIN_26
+
+#define PSP27801_DC_PORT                        HW_GPIO_PORT_1
+#define PSP27801_DC_PIN                         HW_GPIO_PIN_1
+
+#define PSP27801_EN_PORT                        HW_GPIO_PORT_0
+#define PSP27801_EN_PIN                         HW_GPIO_PIN_27
+
+#define PSP27801_RST_PORT                       HW_GPIO_PORT_0
+#define PSP27801_RST_PIN                        HW_GPIO_PIN_12
+
+
+//platform_devices.c
+ad_io_conf_t      psp27801_gpio_cfg[] = {
+    { 0, 26,   { HW_GPIO_MODE_OUTPUT, HW_GPIO_FUNC_LCD_SPI_DO,  true }, { HW_GPIO_MODE_OUTPUT, HW_GPIO_FUNC_GPIO, true }},
+    { 0, 21,  { HW_GPIO_MODE_OUTPUT, HW_GPIO_FUNC_LCD_SPI_CLK, true }, { HW_GPIO_MODE_OUTPUT, HW_GPIO_FUNC_GPIO, true }},
+    { 0, 20,   { HW_GPIO_MODE_OUTPUT, HW_GPIO_FUNC_LCD_SPI_EN,  true }, { HW_GPIO_MODE_OUTPUT, HW_GPIO_FUNC_GPIO, true }},
+    { 1, 1,   { HW_GPIO_MODE_OUTPUT, HW_GPIO_FUNC_LCD_SPI_DC,  true }, { HW_GPIO_MODE_OUTPUT, HW_GPIO_FUNC_GPIO, true }},
+    { 0, 27,   { HW_GPIO_MODE_OUTPUT, HW_GPIO_FUNC_GPIO,    true }, { HW_GPIO_MODE_OUTPUT, HW_GPIO_FUNC_GPIO, true }},
+    { 0, 12,  { HW_GPIO_MODE_OUTPUT, HW_GPIO_FUNC_GPIO,    true }, { HW_GPIO_MODE_OUTPUT, HW_GPIO_FUNC_GPIO, true }},
+    { 1, 9,   { HW_GPIO_MODE_OUTPUT, HW_GPIO_FUNC_GPIO,    true }, { HW_GPIO_MODE_OUTPUT, HW_GPIO_FUNC_GPIO, true }},
+ };
+
+
+
+ad_lcdc_io_conf_t    psp27801_io = 
+{
+    .voltage_level = HW_GPIO_POWER_V33,
+    .io_cnt = sizeof(psp27801_gpio_cfg) / sizeof(psp27801_gpio_cfg[0]),
+    .io_list = psp27801_gpio_cfg,
+};
+
+ad_lcdc_controller_conf_t    psp27801_cfg = 
+{
+    .io = &psp27801_io,
+    .drv = &psp27801_drv,
+};
+

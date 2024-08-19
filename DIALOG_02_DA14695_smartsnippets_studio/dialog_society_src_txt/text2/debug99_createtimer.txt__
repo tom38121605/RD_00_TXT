@@ -1,0 +1,124 @@
+
+
+ //创建任务 ： 任务名，任务函数，参数，内存大小，优先级，句柄
+     OS_TASK_CREATE("SysInit",  system_init,  0, 1024,  6,  handle );    
+
+//创建 定时器：定时器名，定时器周期，是否重复调用， 第4个参数待理解，定时器回调函数，h1应为定时器句柄之类
+     h1 = OS_TIMER_CREATE("btn_timer", OS_MS_2_TICKS(3000), 0,  OS_GET_CURRENT_TASK(), btn_timer_cb); 
+
+
+=========================================
+
+
+ 
+
+==================================== timer任务创建====================================
+
+ touch任务创建flow：
+
+   main  -->   system_init  -->   wrbl_task  -->  OS_TIMER_CREATE
+
+----------------------
+
+main()
+
+   OS_TASK_CREATE("SysInit",  system_init,  0, 1024,  OS_TASK_PRIORITY_HIGHEST,  handle );              
+
+---
+
+system_init()
+    OS_TASK_CREATE( "Wearable Application",  wrbl_task, NULL, 250 * OS_STACK_WORD_SIZE, 1,  handle);     //创建主任务wrbl_task
+
+---- 
+
+//主任务函数
+wrbl_task(void *params)
+
+        deca_tim = OS_TIMER_CREATE("deca_timer", OS_MS_2_TICKS(ishowfreq), pdTRUE,   (void *) OS_GET_CURRENT_TASK(), deca_timer_cb);
+        //OS_TIMER_START(deca_tim, OS_TIMER_FOREVER);
+
+
+
+==================================== timer任务的启动和关闭===seemsnouse=================================
+
+按键处理flow:
+
+    wrbl_task  -->  wrbl_button_event_cb  -->  wrbl_short_button_pressed  -->  UI_DECATAG_SCREEN2  
+
+
+-------------
+
+//短按处理
+wrbl_short_button_pressed()  
+
+    switch (wrbl_task_env.active_screen)  
+
+         //-----日期设置
+        case UI_DATE_SCREEN:                  //切换日期屏幕
+            ......
+
+        case UI_DECATAG_SCREEN2:          //--button
+
+               if(flg_send==0)
+                       flg_send=1;
+                       OS_TIMER_START(deca_tim, OS_TIMER_FOREVER);
+
+               else
+                       flg_send=0;
+                       OS_TIMER_STOP(deca_tim, OS_TIMER_FOREVER);
+
+                       ui_task_set_tag_distanceval(0);
+
+               break;
+
+        default:
+           break;
+
+
+
+==================================== timer任务执行====================================
+
+timer处理flow：   
+
+   deca_timer_cb  -->  wrbl_notify_task( WRBL_DECATIME_NOTIF)  --> wrbl_task --> if(notif & WRBL_DECATIME_NOTIF)  
+
+
+---------------------------------------------
+
+
+
+//定时器中断函数
+deca_timer_cb(OS_TIMER timer)
+{
+         wrbl_notify_task( WRBL_DECATIME_NOTIF);   
+}
+
+
+---
+
+//主任务函数
+ wrbl_task(void *params)
+
+        for (;;)  
+
+                /* Wait on any of the event group bits, then clear them all */
+                ret = OS_TASK_NOTIFY_WAIT(0, OS_TASK_NOTIFY_ALL_BITS, &notif, OS_TASK_NOTIFY_FOREVER);
+                OS_ASSERT(ret == OS_TASK_NOTIFY_SUCCESS);
+
+                if(notif & WRBL_DECATIME_NOTIF)      //处理定时器的消息通知
+ 
+                        dw1000_twr_measure(0);
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+

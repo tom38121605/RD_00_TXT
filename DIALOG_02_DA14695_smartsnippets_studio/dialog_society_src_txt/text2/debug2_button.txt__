@@ -1,0 +1,384 @@
+
+说明1： button是采用中断式的
+
+
+问： 下面有2个wrbl_notify_task_button， 打log看执行的是哪一个   
+测试： （短按是hw_button_released中的） (两个都要，一个短按，一个长按)
+
+
+
+====================================按键任务创建====================================
+
+按键任务创建flow：
+
+   main  -->   system_init  -->   wrbl_task
+
+-----------------------
+
+main()
+
+   OS_TASK_CREATE("SysInit",  system_init,  0, 1024,  6,  handle );              
+
+--- 
+
+system_init()
+
+    //创建主任务函数wrbl_task
+    OS_TASK_CREATE( "Wearable Application",  wrbl_task, NULL, 1000, 1,  handle);   
+
+
+
+=======================================按键初始化=======================================
+
+按键初始化flow:
+
+    wrbl_task   -->  wrbl_button_init  -->  set(wrbl_button_event_cb)  -->  create(btn_tim )  -->  ad_gpio_intr_register 
+
+-------------------------------
+
+
+//主任务函数
+void wrbl_task(void *params) 
+
+   //设置button消息处理函数为wrbl_button_event_cb，设置扫描按键的定时器及定时器回调函数btn_timer_cb，
+     设置按键引脚p23为中断模式，并设置hw_button_pressed 和 hw_button_released事件
+
+   wrbl_button_init(&wrbl_button_event_cb);  
+
+---
+
+//设置button消息处理函数为wrbl_button_event_cb，设置扫描按键的定时器及定时器回调函数btn_timer_cb，
+  设置按键引脚p23为中断模式，并设置hw_button_pressed 和 hw_button_released事件
+
+//参数列表： wrbl_button_event_cb   --消息处理函数
+void wrbl_button_init( cb)
+ 
+        handle_button_cb = cb;    //设置按键处理的函数为wrbl_button_event_cb
+
+        //创建一个定时器btn_timer，周期为3000ms，不重复触发， 第4个参数待理解，定时器回调函数    （待理解--或是用于按键计时）
+        btn_tim = OS_TIMER_CREATE("btn_timer", OS_MS_2_TICKS(3000), 0,  OS_GET_CURRENT_TASK(), btn_timer_cb);
+
+        //注册HW_BUTTON（按键事件），用函数hw_button_pressed(), hw_button_released(), 回调P23的按键事件
+        ad_gpio_intr_register(HW_BUTTON);  //把按键引脚p23设为中断方式，并把hw_button_pressed(), hw_button_released设置为中断回调函数
+ 
+---
+
+//定义HW_BUTTON ， 设置按键引脚为P23，设置2个按键事件函数hw_button_pressed(), hw_button_released()
+AD_GPIO_INTR_INSTANCE(HW_BUTTON, HW_BUTTON_PORT, HW_BUTTON_PIN, hw_button_pressed, hw_button_released);
+
+---
+
+ //创建定时器 
+ OS_TIMER_CREATE(name, period, reload, timer_id, callback) 
+       xTimerCreate( name , period, reload , timer_id , callback )
+
+
+
+=======================================按键扫描===============================================
+
+
+按键扫描flow:   （在release事件中判断按键是短按还是长按）
+
+短按flow：     hw_button_pressed  -->  reset(btn_tim)  -->  (小于3000ms)  -->  hw_button_released  -->  btn_press_type = BTN_SHORT_PRESS --> 
+                    --> wrbl_notify_task_button   -->  stop(btn_tim)   -->  wrbl_task
+   
+长按flow：     hw_button_pressed  -->  reset(btn_tim)  -->  (大于3000ms) -->  btn_timer_cb  -->  btn_press_type = BTN_LONG_PRESS  --> 
+                    -->wrbl_notify_task_button  -->  hw_button_released   -->  stop(btn_tim)   -->  wrbl_task
+   
+
+-------------------------------------------------
+
+
+//按键按下事件处理
+hw_button_pressed()
+ 
+        btn_press_time = OS_TICKS_2_MS(OS_GET_TICK_COUNT());   //取得当前时间
+
+        OS_TIMER_RESET_FROM_ISR(btn_tim);  // 重新启动定时器， 这个定时器作用是在长按的时候，发送长按的通知给wrbl task（短按忽略）
+ 
+---
+
+//按键弹起事件， 得出是短按还是长按
+hw_button_released()
+
+        btn_timeout = OS_TICKS_2_MS(OS_GET_TICK_COUNT()) - btn_press_time;  //取得按键按下的时间
+
+        if (btn_timeout > 100 && btn_timeout < 3000)  //小于3000ms则为短按
+                btn_press_type = BTN_SHORT_PRESS;
+                wrbl_notify_task_button();   //--测试这里是有效的
+     
+        OS_TIMER_STOP_FROM_ISR(btn_tim);   //停止按键定时器，短按情况这个定时器已无作用，长按情况，这个定时器已完成了作用
+        btn_press_time = 0;
+ 
+ ---
+
+//把按键事件标志，加入消息队列中
+wrbl_notify_task_button()
+ 
+       //wrbl_notify_task(1 << 2);   // WRBL_BUTTON_PRESS_NOTI
+            if ( SCB->ICSR >0  )  // 如果有中断進来，则消息来自ISR 
+                  OS_TASK_NOTIFY_FROM_ISR (wrbl_task_env.wrbl_task_p, WRBL_BUTTON_PRESS_NOTI, 1);    //--消息来自ISR的处理，  1--OS_NOTIFY_SET_BITS 
+
+ 
+---
+
+//向wrbl task任务发送新的通知到队列
+#define OS_TASK_NOTIFY_FROM_ISR(task, value, action)         
+                (略)
+
+        
+-----------
+ 
+
+// 作用是在长按的时候，发送长按的通知给wrbl task （短按的时候不会发生，在hw_button_released中被stop）
+btn_timer_cb( timer)
+ 
+    btn_press_type = BTN_LONG_PRESS;
+
+    //wrbl_notify_task_button();   //--测试这里是无效的（短按无效，长按这里是有效的）
+         wrbl_notify_task( WRBL_BUTTON_PRESS_NOTIF  );  //      1 << 2 
+ 
+ 
+
+=======================================按键处理=======================================
+
+按键处理flow:
+
+    wrbl_task  -->  wrbl_button_event_cb  -->  wrbl_short_button_pressed
+
+
+
+-----------------------------------------------
+
+
+//主任务函数
+void wrbl_task(void *params) 
+
+   for(;;)
+
+        //if (notif & WRBL_BUTTON_PRESS_NOTIF)  
+        //     handle_button_event();
+        //        handle_button_cb(btn_press_type);
+                     wrbl_button_event_cb(btn_press_type);   //按键处理
+
+
+---
+
+//参数列表： wrbl_button_event_cb  --函数指针
+wrbl_button_init( cb)
+        handle_button_cb = cb;
+
+---- 
+
+//按键长按和短按处理
+wrbl_button_event_cb(btn_press_t press)
+{
+        if (!wrbl_task_env.display_enabled)    //先亮屏幕
+                wrbl_set_lcd_enabled();
+        
+         else if (press == BTN_LONG_PRESS)        //长按处理  （跳过，长按都是reset）
+                switch(wrbl_task_env.active_screen)  
+
+                case UI_STEPS_SCREEN:
+                        wrbl_step_cfg(WRBL_RESET);
+                        break;
+
+                case UI_LIGHT_SLEEP_SCREEN:
+                case UI_DEEP_SLEEP_SCREEN:
+                        wrbl_sleep_cfg(WRBL_RESET);
+                        break;
+
+                case UI_CALORIES_SCREEN:
+                case UI_DISTANCE_SCREEN:
+                        wrbl_calories_cfg(WRBL_RESET);
+                        break;
+
+                default:
+                        
+                        wrbl_short_button_pressed();
+                
+          else  
+                 
+                wrbl_short_button_pressed();       //短按处理
+       
+        //下面的功能  --待理解
+        if(wrbl_task_env.timeout_mode == WRBL_TIMEOUT_ALARM)       
+                handle_wrbl_timeout(WRBL_TIMEOUT_ALARM);
+        else  
+                wrbl_set_timeout_mode(wrbl_task_env.change_mode != UI_DISPLAY_MODE
+                        ? WRBL_TIMEOUT_INPUT : WRBL_TIMEOUT_SCREEN);
+         
+---
+
+
+//短按处理
+wrbl_short_button_pressed()
+
+     uint8_t max_days;
+
+    switch (wrbl_task_env.active_screen) 
+
+    //-----时间设置
+    case UI_TIME_SCREEN:                                                        //切换时间屏幕
+
+        switch (wrbl_task_env.change_mode) 
+
+        case UI_DISPLAY_MODE:                                                  //显示模式  
+            wrbl_task_env.display_digit = ab08x5_get_hours(true);
+            wrbl_task_env.change_mode = UI_TIME_HOURS_SETUP;
+            break;
+        case UI_TIME_HOURS_SETUP:                                                    //修改模式--小时值                                     
+            ab08x5_set_hours(wrbl_task_env.display_digit);
+            wrbl_task_env.display_digit = ab08x5_get_minutes(true);
+            wrbl_task_env.change_mode = UI_TIME_MINUTES_SETUP;
+            break;
+        case UI_TIME_MINUTES_SETUP:                                                 //修改模式--分钟值 
+            ab08x5_set_minutes(wrbl_task_env.display_digit);
+            OS_TASK_NOTIFY(OS_GET_CURRENT_TASK(), WRBL_SET_TIME_NOTIF, OS_NOTIFY_SET_BITS);
+            wrbl_task_env.change_mode = UI_DISPLAY_MODE;
+            break;
+        default:
+            break;
+      
+        ui_task_set_change_mode(wrbl_task_env.change_mode);
+        break;
+
+    //-----日期设置
+    case UI_DATE_SCREEN:                                                       //切换日期屏幕
+        switch (wrbl_task_env.change_mode)  
+        case UI_DISPLAY_MODE:                                                 //显示模式 
+            wrbl_task_env.display_digit = ab08x5_get_days(true);
+            wrbl_task_env.change_mode = UI_DATE_DAY_SETUP;
+            break;
+        case UI_DATE_DAY_SETUP:                                                //修改模式--日
+            ab08x5_set_days(wrbl_task_env.display_digit);
+            wrbl_task_env.display_digit = ab08x5_get_months(true);
+            wrbl_task_env.change_mode = UI_DATE_MONTH_SETUP;
+            break;
+        case UI_DATE_MONTH_SETUP:                                                //修改模式--月
+            ab08x5_set_months(wrbl_task_env.display_digit);
+            wrbl_task_env.display_digit = ab08x5_get_years(true);
+
+            /* Calculate and check that days set are not more than month's maximum days */
+            max_days = days_of_month(ab08x5_get_months(false), ab08x5_get_years(false));
+            if(ab08x5_get_days(true) > max_days) 
+                ab08x5_set_days(max_days);
+       
+            wrbl_task_env.change_mode = UI_DATE_YEAR_SETUP;
+            break;
+        case UI_DATE_YEAR_SETUP:                                                //修改模式--年
+            ab08x5_set_years(wrbl_task_env.display_digit);
+            /* Calculate and check that days set are not more than month's maximum days */
+            max_days = days_of_month(ab08x5_get_months(true), ab08x5_get_years(false));
+            if(ab08x5_get_days(true) > max_days) 
+                ab08x5_set_days(max_days);
+ 
+ 
+                /* Calculate and set weekday */
+                struct tm tmp = {
+                    .tm_year = ab08x5_get_years(false),
+                    .tm_mon  = ab08x5_get_months(false) - 1,
+                    .tm_mday = ab08x5_get_days(false),
+                    .tm_hour = 0,
+                    .tm_min  = 0,
+                    .tm_sec  = 0,
+                };
+
+                /* Call function to calculate day_of_week */
+                mktime(&tmp);
+
+                ab08x5_set_weekdays(tmp.tm_wday);
+ 
+            OS_TASK_NOTIFY(OS_GET_CURRENT_TASK(), WRBL_SET_TIME_NOTIF, OS_NOTIFY_SET_BITS);
+            wrbl_task_env.change_mode = UI_DISPLAY_MODE;
+            break;
+        default:
+            break;
+ 
+        ui_task_set_change_mode(wrbl_task_env.change_mode);
+        break;
+
+    //-----闹铃设置
+    case UI_ALARM_SCREEN:                                                      //切换闹铃屏幕
+        switch (wrbl_task_env.change_mode)  
+        case UI_DISPLAY_MODE:                                                    //显示模式
+            wrbl_task_env.change_mode = UI_ALARM_SETUP;
+            break;
+        case UI_ALARM_SETUP:                                                        //修改模式  -- 闹铃开/关
+            /* set AB08X5_AIRQ_RPT_ONCE_PER_DAY as incidence of alarm since
+               there is not support for set freq of alarm manually yet */
+            ab08x5_alarm_rpt_config(wrbl_task_env.alarm_state ?
+                AB08X5_AIRQ_RPT_ONCE_PER_DAY : AB08X5_AIRQ_RPT_DISABLED);
+            wrbl_task_env.display_digit = ab08x5_get_hours_alarm(true);
+            wrbl_task_env.change_mode = UI_ALARM_HOURS_SETUP;
+            break;
+        case UI_ALARM_HOURS_SETUP:                                                    //修改模式 -- 闹铃小时值
+            ab08x5_set_hours_alarm(wrbl_task_env.display_digit);
+            wrbl_task_env.display_digit = ab08x5_get_minutes_alarm(true);
+            wrbl_task_env.change_mode = UI_ALARM_MINUTES_SETUP;
+            break;
+        case UI_ALARM_MINUTES_SETUP:                                                    //修改模式 -- 闹铃分钟值
+            ab08x5_set_minutes_alarm(wrbl_task_env.display_digit);
+            wrbl_task_env.change_mode = UI_DISPLAY_MODE;
+            break;
+        default:
+            break;
+ 
+        ui_task_set_change_mode(wrbl_task_env.change_mode);
+        break;
+ 
+    //-----计步器设置
+    case UI_STEPS_SCREEN:                                                             //计步器屏幕？
+ 
+        bool state = !wrbl_ht_ctrl_get_sens_state(SRVC_IFACE_HCS, SRVC_SENS_STEP);
+        wrbl_step_cfg(state ? WRBL_ENABLE : WRBL_DISABLE);
+ 
+        wrbl_hcs_send_status(HCS_OP_CODE_STEP, state);
+ 
+        break;
+ 
+    //-----休眠黑屏
+    case UI_LIGHT_SLEEP_SCREEN:                                          //休眠屏幕？
+    case UI_DEEP_SLEEP_SCREEN:
+ 
+        bool state = !wrbl_ht_ctrl_get_sens_state(SRVC_IFACE_HCS, SRVC_SENS_SQ);
+        wrbl_sleep_cfg(state ? WRBL_ENABLE : WRBL_DISABLE);
+ 
+        wrbl_hcs_send_status(HCS_OP_CODE_SLEEP_QUALITY, state);
+ 
+        break;
+ 
+    //-----卡里路设置
+    case UI_CALORIES_SCREEN:                                       //卡路里屏幕 （无按键操作）
+    case UI_DISTANCE_SCREEN:
+ 
+        bool state = !wrbl_ht_ctrl_get_sens_state(SRVC_IFACE_HCS, SRVC_SENS_CAL);
+        wrbl_calories_cfg(state ? WRBL_ENABLE : WRBL_DISABLE);
+ 
+        wrbl_hcs_send_status(HCS_OP_CODE_CALORIES, state);
+ 
+        break;
+ 
+    //-----心率计设置
+    case UI_HEART_RATE_SCREEN:                               //心率计屏幕
+ 
+        bool state = !wrbl_ht_ctrl_get_sens_state(SRVC_IFACE_HCS, SRVC_SENS_HRM);
+        wrbl_heart_rate_cfg(state ? WRBL_ENABLE : WRBL_DISABLE);
+ 
+        wrbl_hcs_send_status(HCS_OP_CODE_HEART_RATE, state);
+ 
+        break;
+ 
+    //-----NFC 设置  -- 用按键开NFC/关NFC
+    case UI_NFC_SCREEN:                                       //NFC屏幕
+        wrbl_nfc_cfg(wrbl_task_env.nfc_state ? WRBL_DISABLE : WRBL_ENABLE);
+        break;
+    default:
+        break;
+ 
+
+
+
+
+
+

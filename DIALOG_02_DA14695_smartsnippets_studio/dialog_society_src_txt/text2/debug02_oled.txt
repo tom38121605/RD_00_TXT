@@ -1,0 +1,125 @@
+
+
+LCDÏÔÊ¾flow£º
+
+
+    system_init --> prvSetupHardware --> ble_range_dte_task --> ble_central_task 
+    ble_central_task --> handle_evt_gattc_notification --> handle_dte_results_notification  -->  display_str
+    display_str --> hw_lcd_draw_string  -->  ui_draw_string  --> gdi_display_update
+
+
+
+=====================================================
+
+prvSetupHardware(  )
+
+        /* Init hardware */
+        pm_system_init(periph_init);
+
+        ad_lcdc_io_config(psp27801_cfg.io, AD_IO_CONF_OFF);
+
+
+
+ ad_lcdc_handle_t   dev_open( )
+ 
+        ad_lcdc_handle_t dev = ad_lcdc_open(LCDC_CONFIG);
+        return dev;
+ 
+===================================
+
+hw_lcd_draw_string( *dist_str,  *rssi_str)
+
+        static update_ind = true;
+        char indicator[2];
+
+        if (update_ind) {
+                sprintf(indicator,".");
+        else
+                sprintf(indicator," ");
+      
+        update_ind = !update_ind;
+
+        gdi_set_bg_color(GDI_COLOR_DBLUE);
+
+        ui_draw_string(WHITE, 80, 50, &calibri_18ptFontInfo, dist_str, 15);
+        ui_draw_string(WHITE, 87, 107, &calibri_18ptFontInfo, indicator, 15);
+
+       gdi_display_update();
+
+---
+
+gdi_display_update(void)  
+{
+        ad_lcdc_handle_t dev;
+        hw_lcdc_layer_t layer;
+
+        layer.baseaddr = (uint32_t)gdi->buffer[gdi->active_buf];
+        layer.dma_prefetch_lvl = HW_LCDC_FIFO_PREFETCH_LVL;
+        layer.format = gdi_to_layer_color_format(gdi->color_format);
+        layer.resx = gdi->width;
+        layer.resy = gdi->height;
+        layer.startx = 0;
+        layer.starty = 0;
+        layer.stride = gdi->stride;
+
+        dev = dev_open();
+        dev_draw(dev, &layer);
+        dev_close(dev);
+}
+
+
+------------
+
+ui_draw_string( color,  x,  y, *font,  *str,  scale)
+
+        x_offset = x;
+        *cur_char = str;
+
+        while (*cur_char)
+
+                if (*cur_char == ' ') 
+
+                        x_offset -= (font->spaceWidth * scale) / 10;
+
+               else if (  (font->start) <= (*cur_char)    && (*cur_char) <= (font->end) ) 
+                        x_offset -= x_offset == x ? 0 : font->kerning;
+                        x_offset -= gdi_draw_font(*cur_char, color, x_offset, y, scale, font);
+               
+                cur_char++;
+
+-----
+
+
+gdi_draw_font( character,   color,  x,  y,  scale,  * font)
+
+        uint8_t pos = character - font->start;
+
+        gdi_coord_t width = (font->descriptor[pos].width * scale) / 10;
+        gdi_coord_t height = (font->height * scale) / 10;
+
+        int s_stride = CEILING_FUNC(font->descriptor[pos].width, 8);
+
+        for (int row = 0; row < height; ++row) {
+                for (int col = 0; col < width; ++col) {
+                        int s_byte = ((col * 10) / scale) / 8 + ((row * 10) / scale) * s_stride;
+                        int s_pos = ((col * 10) / scale) % 8;
+
+                        if (font->bitmap[font->descriptor[pos].offset + s_byte] & (1 << s_pos))
+                                //gdi_draw_dot(color, x - col, y - row);
+                                     gdi_draw_dot_native(color, x, y);
+
+        return width;
+
+
+---
+
+gdi_draw_dot_native(color, x, y)
+ 
+        if (x >= gdi->width || y >= gdi->height)  
+                return;
+ 
+        int byte = x + y * gdi->stride;
+        gdi->buffer[gdi->active_buf][byte] = color;
+ 
+ 
+

@@ -1,0 +1,343 @@
+
+#define PSP27801_RW_PORT                        HW_GPIO_PORT_1
+#define PSP27801_RW_PIN                           HW_GPIO_PIN_9
+
+#define PSP27801_CS_PORT                        HW_GPIO_PORT_0
+#define PSP27801_CS_PIN                           HW_GPIO_PIN_20
+
+#define PSP27801_SCK_PORT                       HW_GPIO_PORT_0
+#define PSP27801_SCK_PIN                          HW_GPIO_PIN_21
+
+#define PSP27801_SDO_PORT                       HW_GPIO_PORT_0
+#define PSP27801_SDO_PIN                         HW_GPIO_PIN_24
+
+#define PSP27801_SDI_PORT                       HW_GPIO_PORT_0
+#define PSP27801_SDI_PIN                          HW_GPIO_PIN_26
+
+#define PSP27801_DC_PORT                        HW_GPIO_PORT_1
+#define PSP27801_DC_PIN                          HW_GPIO_PIN_1
+
+#define PSP27801_EN_PORT                        HW_GPIO_PORT_0
+#define PSP27801_EN_PIN                           HW_GPIO_PIN_27
+
+#define PSP27801_RST_PORT                       HW_GPIO_PORT_0
+#define PSP27801_RST_PIN                          HW_GPIO_PIN_12
+
+
+psp27801_gpio_cfg[] = {
+    { 0, 26,   { HW_GPIO_MODE_OUTPUT, HW_GPIO_FUNC_LCD_SPI_DO,  true }, { HW_GPIO_MODE_OUTPUT, HW_GPIO_FUNC_GPIO, true }},
+    { 0, 21,  { HW_GPIO_MODE_OUTPUT, HW_GPIO_FUNC_LCD_SPI_CLK, true }, { HW_GPIO_MODE_OUTPUT, HW_GPIO_FUNC_GPIO, true }},
+    { 0, 20,   { HW_GPIO_MODE_OUTPUT, HW_GPIO_FUNC_LCD_SPI_EN,  true }, { HW_GPIO_MODE_OUTPUT, HW_GPIO_FUNC_GPIO, true }},
+    { 1, 1,   { HW_GPIO_MODE_OUTPUT, HW_GPIO_FUNC_LCD_SPI_DC,  true }, { HW_GPIO_MODE_OUTPUT, HW_GPIO_FUNC_GPIO, true }},
+    { 0, 27,   { HW_GPIO_MODE_OUTPUT, HW_GPIO_FUNC_GPIO,    true }, { HW_GPIO_MODE_OUTPUT, HW_GPIO_FUNC_GPIO, true }},
+    { 0, 12,  { HW_GPIO_MODE_OUTPUT, HW_GPIO_FUNC_GPIO,    true }, { HW_GPIO_MODE_OUTPUT, HW_GPIO_FUNC_GPIO, true }},
+    { 1, 9,   { HW_GPIO_MODE_OUTPUT, HW_GPIO_FUNC_GPIO,    true }, { HW_GPIO_MODE_OUTPUT, HW_GPIO_FUNC_GPIO, true }},
+ };
+
+
+typedef struct {
+        HW_GPIO_PORT port;
+        HW_GPIO_PIN  pin;
+        ad_pin_conf_t on;
+        ad_pin_conf_t off;
+} ad_io_conf_t;
+
+typedef struct {
+        HW_GPIO_MODE mode;
+        HW_GPIO_FUNC function;
+        bool         high;     //做输出口时的电平
+} ad_pin_conf_t;
+
+        HW_GPIO_FUNC_LCD_SPI_DC = 45,           /**< GPIO as LCD SPI DC */
+        HW_GPIO_FUNC_LCD_SPI_DO = 46,           /**< GPIO as LCD SPI DO */
+        HW_GPIO_FUNC_LCD_SPI_CLK = 47,          /**< GPIO as LCD SPI CLK */
+        HW_GPIO_FUNC_LCD_SPI_EN = 48,           /**< GPIO as LCD SPI EN */
+
+
+
+------------------------
+
+typedef struct {
+        HW_GPIO_POWER voltage_level;                    //!< Voltage level of the IOs of the device
+        uint8_t io_cnt;                                 //!< Number of IOs in the \sa io_list list
+        const ad_io_conf_t *io_list;                    //!< Array of IOs of the connected devices
+} ad_lcdc_io_conf_t;
+
+typedef struct ad_lcdc_driver_conf_t {
+        hw_lcdc_config_t hw_init;                       //!< LCDC configuration passed to the LCDC LLD
+        hw_lcdc_display_t display;                      //!< Display physical dimensions / timings
+        hw_lcdc_jdi_parallel_timings_t par_timings;     //!< Parallel interface timings
+        HW_LCDC_EXT_CLK ext_clk;                        //!< External clock frequency, \ref HW_LCDC_EXT_CLK
+        bool te_enable;                                 //!< Tearing effect input availability from the LCD
+        HW_LCDC_TE te_polarity;                         //!< Tearing effect level detection
+} ad_lcdc_driver_conf_t;
+
+typedef struct {
+        uint16_t resx, resy;//!< Horizontal/vertical resolution of the screen
+        uint16_t fpx, fpy;  //!< Horizontal/vertical front porch
+        uint16_t bpx, bpy;  //!< Horizontal/vertical back porch
+        uint16_t blx, bly;  //!< Horizontal/vertical blanking
+} hw_lcdc_display_t;
+
+typedef struct {
+        const ad_lcdc_io_conf_t *io;                    //!< I/O configuration
+        const ad_lcdc_driver_conf_t *drv;               //!< Driver configuration
+} ad_lcdc_controller_conf_t;
+
+----------------------------------------
+
+psp27801_drv = {
+        .hw_init.phy_type = HW_LCDC_PHY_CUSTOM,
+        .hw_init.format = HW_LCDC_OCM_8RGB565,
+        .hw_init.cfg_extra_flags = HW_LCDC_MIPI_CFG_RESET | HW_LCDC_MIPI_CFG_SPI4
+                                    | HW_LCDC_MIPI_CFG_DMA | HW_LCDC_MIPI_CFG_TE_DIS,
+        .hw_init.mode = HW_LCDC_MODE_DISABLE,
+        .hw_init.iface_freq = LCDC_FREQ_8MHz,
+        .ext_clk = HW_LCDC_EXT_CLK_OFF,
+        .te_enable = false,
+        .te_polarity = HW_LCDC_TE_LOW,
+
+        .display.resx = 96,
+        .display.resy = 96,
+        .display.fpx = 0,
+        .display.fpy = 0,
+        .display.bpx = 0,
+        .display.bpy = 0,
+        .display.blx = 2,
+        .display.bly = 1,
+};
+
+
+ad_lcdc_io_conf_t    psp27801_io = 
+{
+    .voltage_level = HW_GPIO_POWER_V33,
+    .io_cnt = sizeof(psp27801_gpio_cfg) / sizeof(psp27801_gpio_cfg[0]),
+    .io_list = psp27801_gpio_cfg,
+};
+
+ad_lcdc_controller_conf_t    psp27801_cfg = 
+{
+    .io = &psp27801_io,
+    .drv = &psp27801_drv,
+};
+
+#define LCDC_CONFIG        (&psp27801_cfg)
+
+
+--------
+
+
+typedef struct 
+{
+        const ad_lcdc_controller_conf_t *conf;  //!< LCDC controller current configuration
+        ad_lcdc_device_data_t *data;            //!< LCD configuration / state
+        ad_lcdc_continuous_mode_t cont_mode;    //!< Continuous mode variables
+        OS_TASK owner;                          //!< Task that has acquired this device.
+        OS_MUTEX busy;                          //!< Semaphore for thread safety
+        OS_EVENT event;                         //!< Event for async calls
+        ad_lcdc_user_cb callback;               //!< Callback function to call after transaction ends
+        void *callback_data;                    //!< Callback data to pass to \p callback
+} ad_lcdc_data_t;
+
+typedef struct {
+        int16_t disp_offsetx;                   //!< Horizontal offset of first pixel in display's memory (MIPI devices)
+        int16_t disp_offsety;                   //!< Vertical offset of first pixel in display's memory (MIPI devices)
+        hw_lcdc_frame_t frame;                  //!< Frame dimensions for the partial mode
+        bool frame_valid;                       //!< Validity flag for the frame (partial mode)
+} ad_lcdc_device_data_t;
+
+
+typedef struct {
+        hw_lcdc_callback        cb;             //!< User callback function
+        void                   *cb_data;        //!< User callback data
+        hw_lcdc_frame_t         active_area;    //!< Active area of the LCD that is updated
+        HW_LCDC_MIPI_CFG        config;         //!< Active configuration
+        HW_LCDC_PHY             phy;            //!< Physical connection type
+        HW_LCDC_JDIS_CMD        jdis_update_cmd;//!< JDI/Sharp update/refresh command
+} LCDC_Data;
+
+
+#define REG_GET_FIELD(base, reg, field, var) \
+        ((var & (base ## _ ## reg ## _ ## field ## _Msk)) >> \
+                (base ## _ ## reg ## _ ## field ## _Pos))
+
+#define LCDC_LCDC_STATUS_REG_LCDC_FRAMEGEN_BUSY_Pos (1UL)           /*!< LCDC_FRAMEGEN_BUSY (Bit 1)                            */
+#define LCDC_LCDC_STATUS_REG_LCDC_FRAMEGEN_BUSY_Msk (0x2UL)         /*!< LCDC_FRAMEGEN_BUSY (Bitfield-Mask: 0x01)   
+
+
+
+#define REG_SET_FIELD(base, reg, field, var, val) \
+        var = ((var & ~((base ## _ ## reg ## _ ## field ## _Msk))) | \
+                (((val) << (base ## _ ## reg ## _ ## field ## _Pos)) & \
+                (base ## _ ## reg ## _ ## field ## _Msk)))
+
+define CRG_SYS_CLK_SYS_REG_LCD_RESET_REQ_Pos (4UL)                 /*!< LCD_RESET_REQ (Bit 4)                                 */
+#define CRG_SYS_CLK_SYS_REG_LCD_RESET_REQ_Msk (0x10UL)              /*!< LCD_RESET_REQ (Bitfield-Mask: 0x01)                   */
+#define CRG_SYS_CLK_SYS_REG_LCD_CLK_SEL_Pos (1UL)                   /*!< LCD_CLK_SEL (Bit 1)                                   */
+#define CRG_SYS_CLK_SYS_REG_LCD_CLK_SEL_Msk (0x2UL)                 /*!< LCD_CLK_SEL (Bitfield-Mask: 0x01)                     */
+#define CRG_SYS_CLK_SYS_REG_LCD_ENABLE_Pos (0UL)                    /*!< LCD_ENABLE (Bit 0)                                    */
+#define CRG_SYS_CLK_SYS_REG_LCD_ENABLE_Msk (0x1UL)                  /*!< LCD_ENABLE (Bitfield-Mask: 0x01)   
+
+
+---
+
+typedef struct {                                /*!< (@ 0x30030000) LCDC Structure                                             */
+  __IOM uint32_t  LCDC_MODE_REG;                /*!< (@ 0x00000000) Display Mode                                               */
+  __IOM uint32_t  LCDC_CLKCTRL_REG;             /*!< (@ 0x00000004) Clock Divider                                              */
+  __IOM uint32_t  LCDC_BGCOLOR_REG;             /*!< (@ 0x00000008) Background Color                                           */
+  __IOM uint32_t  LCDC_RESXY_REG;               /*!< (@ 0x0000000C) Resolution X,Y                                             */
+  __IM  uint32_t  RESERVED;
+  __IOM uint32_t  LCDC_FRONTPORCHXY_REG;        /*!< (@ 0x00000014) Front Porch X and Y                                        */
+  __IOM uint32_t  LCDC_BLANKINGXY_REG;          /*!< (@ 0x00000018) Blanking X and Y                                           */
+  __IOM uint32_t  LCDC_BACKPORCHXY_REG;         /*!< (@ 0x0000001C) Back Porch X and Y                                         */
+  __IM  uint32_t  RESERVED1[2];
+  __IOM uint32_t  LCDC_DBIB_CFG_REG;            /*!< (@ 0x00000028) MIPI Config Register                                       */
+  __IOM uint32_t  LCDC_GPIO_REG;                /*!< (@ 0x0000002C) General Purpose IO (2-bits)                                */
+  __IOM uint32_t  LCDC_LAYER0_MODE_REG;         /*!< (@ 0x00000030) Layer0 Mode                                                */
+  __IOM uint32_t  LCDC_LAYER0_STARTXY_REG;      /*!< (@ 0x00000034) Layer0 Start XY                                            */
+  __IOM uint32_t  LCDC_LAYER0_SIZEXY_REG;       /*!< (@ 0x00000038) Layer0 Size XY                                             */
+  __IOM uint32_t  LCDC_LAYER0_BASEADDR_REG;     /*!< (@ 0x0000003C) Layer0 Base Addr                                           */
+  __IOM uint32_t  LCDC_LAYER0_STRIDE_REG;       /*!< (@ 0x00000040) Layer0 Stride                                              */
+  __IOM uint32_t  LCDC_LAYER0_RESXY_REG;        /*!< (@ 0x00000044) Layer0 Res XY                                              */
+  __IM  uint32_t  RESERVED2[18];
+  __IOM uint32_t  LCDC_JDI_RESXY_REG;           /*!< (@ 0x00000090) Resolution XY for the JDI parallel I/F                     */
+  __IOM uint32_t  LCDC_JDI_FBX_BLANKING_REG;    /*!< (@ 0x00000094) Horizontal front/back blanking (hck half periods)          */
+  __IOM uint32_t  LCDC_JDI_FBY_BLANKING_REG;    /*!< (@ 0x00000098) Vertical front/back blanking (vck half periods)            */
+  __IOM uint32_t  LCDC_JDI_HCK_WIDTH_REG;       /*!< (@ 0x0000009C) HCK high/low width                                         */
+  __IOM uint32_t  LCDC_JDI_XRST_WIDTH_REG;      /*!< (@ 0x000000A0) XRST width                                                 */
+  __IOM uint32_t  LCDC_JDI_VST_DELAY_REG;       /*!< (@ 0x000000A4) XRST-to-VST delay                                          */
+  __IOM uint32_t  LCDC_JDI_VST_WIDTH_REG;       /*!< (@ 0x000000A8) VST width                                                  */
+  __IOM uint32_t  LCDC_JDI_VCK_DELAY_REG;       /*!< (@ 0x000000AC) XRST-to-VCK delay                                          */
+  __IOM uint32_t  LCDC_JDI_HST_DELAY_REG;       /*!< (@ 0x000000B0) VCK-to-HST delay                                           */
+  __IOM uint32_t  LCDC_JDI_HST_WIDTH_REG;       /*!< (@ 0x000000B4) HST width                                                  */
+  __IOM uint32_t  LCDC_JDI_ENB_START_HLINE_REG; /*!< (@ 0x000000B8) ENB start horizontal line                                  */
+  __IOM uint32_t  LCDC_JDI_ENB_END_HLINE_REG;   /*!< (@ 0x000000BC) ENB end horizontal line                                    */
+  __IOM uint32_t  LCDC_JDI_ENB_START_CLK_REG;   /*!< (@ 0x000000C0) ENB start delay                                            */
+  __IOM uint32_t  LCDC_JDI_ENB_WIDTH_CLK_REG;   /*!< (@ 0x000000C4) ENB width                                                  */
+  __IM  uint32_t  RESERVED3[8];
+  __IOM uint32_t  LCDC_DBIB_CMD_REG;            /*!< (@ 0x000000E8) MIPI DBIB Command Register                                 */
+  __IM  uint32_t  RESERVED4[2];
+  __IOM uint32_t  LCDC_IDREG_REG;               /*!< (@ 0x000000F4) Identification Register                                    */
+  __IOM uint32_t  LCDC_INTERRUPT_REG;           /*!< (@ 0x000000F8) Interrupt Register                                         */
+  __IOM uint32_t  LCDC_STATUS_REG;              /*!< (@ 0x000000FC) Status Register                                            */
+  __IM  uint32_t  RESERVED5[33];
+  __IOM uint32_t  LCDC_CRC_REG;                 /*!< (@ 0x00000184) CRC check                                                  */
+  __IOM uint32_t  LCDC_LAYER0_OFFSETX_REG;      /*!< (@ 0x00000188) Layer0 OffsetX and DMA prefetch                            */
+} LCDC_Type;  
+
+static const uint8_t ad_lcdc_signal_gpios[] = {
+        AD_LCDC_COMPACT_PINS(HW_GPIO_PORT_0, HW_GPIO_PIN_24),//LCD_TE
+        AD_LCDC_COMPACT_PINS(HW_GPIO_PORT_0, HW_GPIO_PIN_26),//LCD_VCK
+        AD_LCDC_COMPACT_PINS(HW_GPIO_PORT_0, HW_GPIO_PIN_27),//LCD_ENB, PLCD_ENAB
+        AD_LCDC_COMPACT_PINS(HW_GPIO_PORT_0, HW_GPIO_PIN_28),//LCD_VST, PLCD_VSYNC
+        AD_LCDC_COMPACT_PINS(HW_GPIO_PORT_0, HW_GPIO_PIN_29),//LCD_HCK, PLCD_CLK
+        AD_LCDC_COMPACT_PINS(HW_GPIO_PORT_0, HW_GPIO_PIN_30),//LCD_HST, PLCD_HSYNC
+        AD_LCDC_COMPACT_PINS(HW_GPIO_PORT_0, HW_GPIO_PIN_31),//LCD_XRST
+        AD_LCDC_COMPACT_PINS(HW_GPIO_PORT_1, HW_GPIO_PIN_2), //LCD_BLUE0
+        AD_LCDC_COMPACT_PINS(HW_GPIO_PORT_1, HW_GPIO_PIN_3), //LCD_BLUE1
+        AD_LCDC_COMPACT_PINS(HW_GPIO_PORT_1, HW_GPIO_PIN_4), //LCD_GREEN0
+        AD_LCDC_COMPACT_PINS(HW_GPIO_PORT_1, HW_GPIO_PIN_5), //LCD_GREEN1
+        AD_LCDC_COMPACT_PINS(HW_GPIO_PORT_1, HW_GPIO_PIN_7), //LCD_RED0
+        AD_LCDC_COMPACT_PINS(HW_GPIO_PORT_1, HW_GPIO_PIN_8), //LCD_RED1
+        AD_LCDC_COMPACT_PINS(HW_GPIO_PORT_1, HW_GPIO_PIN_13),//LCD_VCK
+        AD_LCDC_COMPACT_PINS(HW_GPIO_PORT_1, HW_GPIO_PIN_14),//LCD_ENB, PLCD_ENAB
+        AD_LCDC_COMPACT_PINS(HW_GPIO_PORT_1, HW_GPIO_PIN_15),//LCD_VST, PLCD_VSYNC
+        AD_LCDC_COMPACT_PINS(HW_GPIO_PORT_1, HW_GPIO_PIN_16),//LCD_HCK, PLCD_CLK
+        AD_LCDC_COMPACT_PINS(HW_GPIO_PORT_1, HW_GPIO_PIN_17),//LCD_HST, PLCD_HSYNC
+        AD_LCDC_COMPACT_PINS(HW_GPIO_PORT_1, HW_GPIO_PIN_21),//LCD_XRST
+        AD_LCDC_COMPACT_PINS(HW_GPIO_PORT_1, HW_GPIO_PIN_22),//LCD_TE
+};
+
+ 
+static const uint8_t ad_lcdc_ext_gpios[] = {
+        AD_LCDC_COMPACT_PINS(HW_GPIO_PORT_1, HW_GPIO_PIN_10),//LCD_VCOM, LCD_FRP, LCD_EXTCOMIN
+        AD_LCDC_COMPACT_PINS(HW_GPIO_PORT_1, HW_GPIO_PIN_11),//LCD_XFRP
+};
+
+----------
+
+#define REG_GETF(base, reg, field) \
+        (((base->reg) & (base##_##reg##_##field##_Msk)) >> (base##_##reg##_##field##_Pos))
+
+
+#define LCDC_LCDC_IDREG_REG_LCDC_ID_Pos   (0UL)                     /*!< LCDC_ID (Bit 0)                                       */
+#define LCDC_LCDC_IDREG_REG_LCDC_ID_Msk   (0xffffffffUL)            /*!< LCDC_ID (Bitfield-Mask: 0xffffffff)                   */
+
+
+------
+
+#define REG_CLR_BIT(base, reg, field) \
+        do { \
+                base->reg &= ~(base##_##reg##_##field##_Msk); \
+         } while (0)
+
+#define CRG_SYS_CLK_SYS_REG_LCD_ENABLE_Msk (0x1UL) 
+
+
+---
+
+#define REG_SETF(base, reg, field, new_val) \
+                base->reg = ((base->reg & ~(base##_##reg##_##field##_Msk)) | \
+                ((base##_##reg##_##field##_Msk) & ((new_val) << (base##_##reg##_##field##_Pos))))
+
+reg=(reg&~reg_Msk) I (reg_msk & 1<<reg_Pos );
+
+#define LCDC_LCDC_INTERRUPT_REG_LCDC_IRQ_TRIGGER_SEL_Pos (31UL)                  
+#define LCDC_LCDC_INTERRUPT_REG_LCDC_IRQ_TRIGGER_SEL_Msk (0x80000000UL)
+
+#define LCDC_LCDC_INTERRUPT_REG_LCDC_VSYNC_IRQ_EN_Pos (0UL)                                    
+#define LCDC_LCDC_INTERRUPT_REG_LCDC_VSYNC_IRQ_EN_Msk (0x1UL)
+
+#define LCDC_LCDC_CLKCTRL_REG_LCDC_SEC_CLK_DIV_Pos (27UL)         
+#define LCDC_LCDC_CLKCTRL_REG_LCDC_SEC_CLK_DIV_Msk (0xf8000000UL)  
+
+
+-----
+
+#define REG_SET_FIELD(base, reg, field, var, val) \
+        var = ((var & ~((base ## _ ## reg ## _ ## field ## _Msk))) | \
+                (((val) << (base ## _ ## reg ## _ ## field ## _Pos)) & \
+                (base ## _ ## reg ## _ ## field ## _Msk)))
+
+var= (var&~reg_Msk) I (reg_msk & val<<reg_Pos );
+
+#define LCDC_LCDC_DBIB_CMD_REG_LCDC_DBIB_CMD_SEND_Pos (30UL)                       
+#define LCDC_LCDC_DBIB_CMD_REG_LCDC_DBIB_CMD_SEND_Msk (0x40000000UL)  
+
+#define LCDC_LCDC_DBIB_CMD_REG_LCDC_DBIB_CMD_STORE_Pos (27UL)      
+#define LCDC_LCDC_DBIB_CMD_REG_LCDC_DBIB_CMD_STORE_Msk (0x8000000UL)  
+
+#define LCDC_LCDC_DBIB_CMD_REG_LCDC_DBIB_CMD_VAL_Pos (0UL)         
+#define LCDC_LCDC_DBIB_CMD_REG_LCDC_DBIB_CMD_VAL_Msk (0xffffUL) 
+
+
+
+=======
+
+typedef struct {
+        int16_t disp_offsetx;                   //!< Horizontal offset of first pixel in display's memory (MIPI devices)
+        int16_t disp_offsety;                   //!< Vertical offset of first pixel in display's memory (MIPI devices)
+        hw_lcdc_frame_t frame;                  //!< Frame dimensions for the partial mode
+        bool frame_valid;                       //!< Validity flag for the frame (partial mode)
+} ad_lcdc_device_data_t;
+
+ad_lcdc_device_data_t      lcdc_dev_data;
+
+
+------------------------------------
+
+typedef enum {
+        HW_LCDC_MIPI_CMD,        //!< New command to the LCD
+        HW_LCDC_MIPI_STORE_BADDR,//!< Store value to the line register
+        HW_LCDC_MIPI_DATA,       //!< Additional data to a command
+} HW_LCDC_MIPI;
+
+------
+
+typedef struct {
+        OS_EVENT event;
+}frame_update_cb_data_t;
+
+PRIVILEGED_DATA static frame_update_cb_data_t frame_update_cb_data;
+
+

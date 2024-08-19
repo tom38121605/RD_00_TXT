@@ -1,0 +1,149 @@
+
+#define DW_CS_PORT                        HW_GPIO_PORT_0
+#define DW_CS_PIN                           HW_GPIO_PIN_20
+#define DW_SCK_PORT                       HW_GPIO_PORT_0
+#define DW_SCK_PIN                          HW_GPIO_PIN_21
+#define DW_SDO_PORT                       HW_GPIO_PORT_0
+#define DW_SDO_PIN                         HW_GPIO_PIN_24
+#define DW_SDI_PORT                       HW_GPIO_PORT_0
+#define DW_SDI_PIN                          HW_GPIO_PIN_26
+
+#define DW_RST_PORT                       HW_GPIO_PORT_0
+#define DW_RST_PIN                        HW_GPIO_PIN_12
+#define DW_IRQ_PORT                       HW_GPIO_PORT_0
+#define DW_IRQ_PIN                        HW_GPIO_PIN_27
+#define DW_AN_PORT                       HW_GPIO_PORT_0
+#define DW_AN_PIN                        HW_GPIO_PIN_19
+
+
+typedef __PACKED_STRUCT {
+        uint8_t         pin;    
+        HW_GPIO_MODE    mode;    
+        HW_GPIO_FUNC    func;    
+        bool            high;    
+        bool            reserve;  
+} gpio_config;
+
+#define HW_GPIO_PINCONFIG(xport, xpin, xmode, xfunc, xhigh)  
+ {                                              
+                .pin = (xport << HW_GPIO_PIN_BITS) | (xpin & ((1 << HW_GPIO_PIN_BITS) - 1)),    
+                .mode = HW_GPIO_MODE_ ## xmode,          
+                .func = HW_GPIO_FUNC_ ## xfunc,          
+                .high = xhigh,                          
+                .reserve = false,                      
+}
+
+gpio_config    output_gpio_cfg[] = {
+ 
+        HW_GPIO_PINCONFIG(DW_CS_PORT, DW_CS_PIN, OUTPUT, GPIO, 0),              //0,20
+        HW_GPIO_PINCONFIG(DW_SCK_PORT, DW_SCK_PIN, OUTPUT, SPI_CLK, 0),      //0,21
+        HW_GPIO_PINCONFIG(DW_SDI_PORT, DW_SDI_PIN, INPUT, SPI_DI, 0),             //0,26
+        HW_GPIO_PINCONFIG(DW_SDO_PORT, DW_SDO_PIN, OUTPUT, SPI_DO, 0),      //0,24
+
+        HW_GPIO_PINCONFIG(DW_IRQ_PORT, DW_IRQ_PIN, INPUT, GPIO, 0),              //0,27  dw3000 irq
+        HW_GPIO_PINCONFIG(DW_RST_PORT, DW_RST_PIN, OUTPUT, GPIO, 0),           //0,12  dw3000 reset
+
+        HW_GPIO_PINCONFIG(DW_AN_PORT, DW_AN_PIN, OUTPUT, GPIO, false),        //0,19 test toggle
+
+        HW_GPIO_PINCONFIG_END      // important!!!
+};
+
+
+/* SPI chip-select pins */
+static const ad_io_conf_t spi_master_cs[] = {{
+
+        .port = DW_CS_PORT,  //0
+        .pin  = DW_CS_PIN,  //20
+        .on = {
+                .mode     = HW_GPIO_MODE_OUTPUT_PUSH_PULL,
+                .function = HW_GPIO_FUNC_SPI_EN,
+                .high     = true
+        },
+        .off = {
+                .mode     = HW_GPIO_MODE_OUTPUT_PUSH_PULL,
+                .function = HW_GPIO_FUNC_SPI_EN,
+                .high     = true
+        }},
+};
+
+/* SPI1 IO */
+const ad_spi_io_conf_t bus_SPI1 = {
+
+.spi_do = {
+        .port = DW_SDO_PORT,  //0
+        .pin  = DW_SDO_PIN,  //24
+        .on   = {HW_GPIO_MODE_OUTPUT_PUSH_PULL, HW_GPIO_FUNC_SPI_DO, false},
+        .off  = {HW_GPIO_MODE_INPUT,            HW_GPIO_FUNC_GPIO,   true},
+        },
+.spi_di = {
+        .port = DW_SDI_PORT,  //0
+        .pin  = DW_SDI_PIN,  //26
+        .on   = {HW_GPIO_MODE_INPUT, HW_GPIO_FUNC_SPI_DI, false},
+        .off  = {HW_GPIO_MODE_INPUT, HW_GPIO_FUNC_GPIO,   true},
+},
+.spi_clk = {
+        .port = DW_SCK_PORT,  //0
+        .pin  = DW_SCK_PIN,  //21
+        .on   = {HW_GPIO_MODE_OUTPUT_PUSH_PULL, HW_GPIO_FUNC_SPI_CLK, false},
+        .off  = {HW_GPIO_MODE_INPUT,            HW_GPIO_FUNC_GPIO,    true},
+},
+
+/*
+ * The number of pins in spi_master_cs array.
+ *
+ * \warning When the SPI bus is used by SNC \p cs_cnt must be always 1
+ */
+.cs_cnt = 1,
+.spi_cs = spi_master_cs,
+
+.voltage_level = HW_GPIO_POWER_V33
+};
+
+
+/* External sensor/module SPI driver */
+const ad_spi_driver_conf_t drv_SPI1 = {
+        .spi = {
+                .cs_pad = {0, 20},
+
+                //.word_mode = HW_SPI_WORD_16BIT, /* 2-byte mode */
+                .word_mode = HW_SPI_WORD_8BIT, /* 1-byte mode */
+
+                .smn_role  = HW_SPI_MODE_MASTER,
+                .polarity_mode = HW_SPI_POL_LOW,
+                .phase_mode    = HW_SPI_PHA_MODE_0,
+                .mint_mode = HW_SPI_MINT_DISABLE,
+                .xtal_freq = HW_SPI_FREQ_DIV_2,  //HW_SPI_FREQ_DIV_8
+                .fifo_mode = HW_SPI_FIFO_RX_TX,
+                .disabled  = 0, /* Should be disabled during initialization phase */
+                .ignore_cs = false,
+                .use_dma   = true,
+                .rx_dma_channel = HW_DMA_CHANNEL_0,
+                .tx_dma_channel = HW_DMA_CHANNEL_1
+        }
+};
+
+/* Sensor/module device configuration */
+const ad_spi_controller_conf_t dev_SPI_CUSTOM_DEVICE = {
+        .id  = HW_SPI1,
+        //.id  = HW_SPI2,
+
+        .io  = &bus_SPI1,
+        .drv = &drv_SPI1
+};
+
+spi_device DECA_DEVICE = &dev_SPI_CUSTOM_DEVICE;
+
+ 
+-------------------------
+
+#define AD_SPI_HANDLE_IS_VALID(__handle) (((__handle == &spi1_data) || (__handle == &spi2_data)) && (((ad_spi_data_t*) __handle)->conf != NULL))
+
+
+ typedef struct {
+        ad_spi_controller_conf_t *conf;
+  
+        OS_TASK  owner; /**< The task which opened the controller */
+        OS_EVENT event; /**< Semaphore for async calls  */
+        OS_MUTEX busy;  /**< Semaphore for thread safety */
+} ad_spi_data_t;
+

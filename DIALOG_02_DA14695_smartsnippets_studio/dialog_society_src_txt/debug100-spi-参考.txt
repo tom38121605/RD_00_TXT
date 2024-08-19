@@ -1,0 +1,457 @@
+
+ 
+
+=====================spi 任务创建，写寄存器操作流程===========================
+
+
+flow：
+         main --> system_init --> prvSetupHardware  --> (SPIDEV.io)  --> ad_spi_io_config  --> prvSPITask_MCP_4822 (Deca_task代替)    
+ 
+         Deca_task --> ad_spi_init --> KEY1引脚中断  --> dac_data_writer --> (SPIDEV) --> ad_spi_write  --> (SPIDEV)  --> hw_spi_writeread_buf
+ 
+
+
+ 
+=====================spi 任务创建，io初始化流程===========================
+
+
+flow：
+         main --> system_init --> prvSetupHardware  --> (SPIDEV.io)  --> ad_spi_io_config  --> prvSPITask_MCP_4822 (Deca_task代替)    
+ 
+
+-----------------------------------------------------------------------------------
+
+ system_init( *pvParameters) 
+
+       //外设和io口设置
+       prvSetupHardware();
+
+        //待理解
+        OS_EVENT_CREATE(signal_MCP4822);
+        OS_EVENT_CREATE(signal_MCP4822_async);
+
+        //创建SPI应用任务
+        OS_TASK_CREATE(
+                                           "SPI",      
+                                            prvSPITask_MCP_4822,  
+                                            NULL,                 
+                                            1024 * OS_STACK_WORD_SIZE,                                                    
+                                            mainSPI_TASK_PRIORITY,  
+                                            prvSPITask_h 
+                                     );         
+
+------------
+
+
+//14695硬件和端口，资源初始化
+prvSetupHardware( )
+
+        //中断引脚初始化  （忽略，跳过）
+        wkup_init();
+
+        //初始化 hardware   //待理解   (忽略，跳过)
+        pm_system_init(periph_init);
+
+
+        //开启io口设置 
+        hw_sys_pd_com_enable();
+
+       //设置spi的io口
+       ad_spi_io_config( DAC_MC4822_DEVICE ->id, DAC_MC4822_DEVICE ->io, AD_IO_CONF_OFF);  // 第一个id的参数没用到，可去掉
+
+
+        //配置按键io口和按键中断
+        HW_GPIO_SET_PIN_FUNCTION(KEY1);
+        HW_GPIO_PAD_LATCH_ENABLE(KEY1);   //开KEY1
+        HW_GPIO_PAD_LATCH_DISABLE(KEY1);  //关KEY1
+
+         //结束io设置
+         hw_sys_pd_com_disable();
+
+
+---------
+
+
+//设置spi的io口, 关闭spi功能
+//参数列表；  id = SPI1,    io= MI, MO, SLK, CS  （id的参数没有用到，可去掉）
+ad_spi_io_config( id, *io,  0)      //id的参数没有用到，可去掉
+
+        *gpio =  io;
+
+        hw_sys_pd_com_enable();
+
+        //设置spi的clk，mo，mi的电源，方向，电平，功能
+        for (i = 0; i < 3; i++) 
+               
+                        //设置io口电源为3.3V
+                        hw_gpio_configure_pin_power(gpio->port, gpio->pin, io->voltage_level);
+
+                        //if (state == 1) 
+                        //        hw_gpio_configure_pin(gpio->port,gpio->pin, gpio->on.mode,
+                        //                                            gpio->on.function, gpio->on.high);
+                         
+                       if (state == 0) 
+                                hw_gpio_configure_pin(gpio->port,gpio->pin, gpio->off.mode,   //设置io口的功能，方向，电平
+                                                                    gpio->off.function, gpio->off.high);                        
+
+                        hw_gpio_pad_latch_enable(gpio->port, gpio->pin);     //打开io口门锁
+                        hw_gpio_pad_latch_disable(gpio->port, gpio->pin);     //关闭io口门锁            
+
+                       gpio++;     
+
+        //设置所有cs口的电源，方向，电平，功能
+        gpio = io->spi_cs;
+
+        for (i = 0; i < io->cs_cnt; i++)  
+
+                         //设置io口电源为3.3V
+                        hw_gpio_configure_pin_power(gpio->port, gpio->pin, io->voltage_level);
+
+                       if (state == 0) //空闲时，配置成普通io口
+                                hw_gpio_configure_pin(gpio->port,gpio->pin, gpio->off.mode,    //设置io口的功能，方向，电平
+                                        gpio->off.function, gpio->off.high); 
+
+                        hw_gpio_pad_latch_enable(gpio->port, gpio->pin);     //打开io口门锁
+                        hw_gpio_pad_latch_disable(gpio->port, gpio->pin);     //关闭io口门锁   
+                
+                      gpio++;     
+
+        hw_sys_pd_com_disable();
+
+        return AD_SPI_ERROR_NONE;
+
+
+
+=====================spi 读写寄存器操作流程===========================
+
+
+flow：
+ 
+  Deca_task --> ad_spi_init --> KEY1引脚中断  --> dac_data_writer --> (SPIDEV) --> ad_spi_open--> ad_spi_write  --> (SPIDEV)  --> hw_spi_writeread_buf
+
+
+-----------------------------------------------------------------------------------
+
+
+//执行SPI读写的应用任务
+Deca_task(*pvParameters)       //prvSPITask_MCP_4822
+
+        //SPI初始化，创建spi的event和busy  //待理解，先跳过
+        ad_spi_init();
+
+        //配置 MCP4822 DAC 模块
+        MCP4822_SET_REG(
+                                      MCP4822_AB_CONTROL_BIT_SET,             // Select DAC channel B (bit 15)       
+                                     MCP4822_GA_CONTROL_BIT_SET,             // Maximum analog output: 2048 mV (bit 13) 
+                                     MCP4822_SHDN_CONTROL_BIT_SET,        // Activate the selected DAC channel (bit 12)  
+                                     analog_output,                                        // Analog output of the selected DAC channel (bits 11-0)  
+                                     reg_val                                                    // Returned value used for setting the MCP4822 module  
+                                    ); 
+
+        for (;;)  
+
+                //等待按键按下的消息，以触发下面的任务
+                OS_EVENT_WAIT(signal_MCP4822, OS_EVENT_FOREVER);
+
+                //通过spi写入数据
+                dac_data_writer(DAC_MC4822_DEVICE, reg_val);
+
+                //取得随机数
+                analog_output = (uint16_t)rand();
+
+                //把随机数，配置到 MCP4822 DAC 模块
+                MCP4822_SET_REG(
+                                                   MCP4822_AB_CONTROL_BIT_SET,
+                                                   MCP4822_GA_CONTROL_BIT_SET,
+                                                   MCP4822_SHDN_CONTROL_BIT_SET,
+                                                   analog_output, 
+                                                   reg_val
+                                               );
+   
+
+----------
+
+//SPI初始化，创建spi的event和busy  //待理解，先跳过
+ad_spi_init()
+
+        OS_EVENT_CREATE(spi1_data.event);
+        OS_MUTEX_CREATE(spi1_data.busy);
+        OS_EVENT_CREATE(spi2_data.event);
+        OS_MUTEX_CREATE(spi2_data.busy);
+
+
+------------------
+
+
+//对spi写入数据
+dac_data_writer( dev,   val) 
+
+         //打开SPI device 
+         spi_dev = ad_spi_open( (ad_spi_controller_conf_t *)dev );
+
+         //拉高CS脚
+         ad_spi_activate_cs(spi_dev);
+
+         //spi写入数据到指定的地址
+        ierr = ad_spi_write(spi_dev, reg_val, sizeof(uint16_t)  );
+
+
+         //拉低CS引脚
+         ad_spi_deactivate_cs(spi_dev);
+
+
+         //关闭spi device
+         ad_spi_close(spi_dev, true);
+
+
+         /*  Print on the serial console the status of the SPI operation */
+         if ierr == 0)  
+             successful； 
+
+---
+
+//参数：SPIDEV
+ad_spi_handle_t ad_spi_open(  *conf)
+
+        ad_spi_data_t *spi = ((conf->id == HW_SPI1) ? &spi1_data : &spi2_data);
+
+        pm_sleep_mode_request(pm_mode_idle);
+
+        RES_ID res_id = ((conf->id == HW_SPI1) ? RES_ID_SPI1 : RES_ID_SPI2);
+
+         dma_channel = 0;      //dma通道
+
+        sys_sw_bsr_acquire(SW_BSR_MASTER_SYSCPU,                                                    //待理解
+                (conf->id == HW_SPI1) ? BSR_PERIPH_ID_SPI1 : BSR_PERIPH_ID_SPI2);
+
+        ad_spi_res_acquire(res_id, dma_channel);         //待理解
+
+        hw_sys_pd_com_enable();  
+
+       //配置spi的io口
+       ad_spi_internal_io_config(conf->id, conf->io, AD_IO_CONF_ON)  ;
+
+       hw_sys_pd_com_disable();  
+
+        spi->owner = OS_GET_CURRENT_TASK();
+
+        OS_ENTER_CRITICAL_SECTION();
+        hw_spi_enable(conf->id, 1);               //待理解
+        OS_LEAVE_CRITICAL_SECTION();
+
+        spi->conf = conf;
+
+        //配置spi的驱动（频率,模式，相位等）
+        ad_spi_reconfig(spi, conf->drv)  ；
+
+
+        return spi; 
+
+
+----
+
+配置spi引脚，sck，mo，mi，cs的电源，方向，电平
+参数：  HW-SPI1, io ，1
+ad_spi_internal_io_config(  id,   *io,  state) 
+
+        gpio = (ad_io_conf_t *) io;
+
+        //配置spi引脚，sck，mo，mi的电源，方向，电平
+        for (i = 0; i < 3; i++)  
+   
+                   hw_gpio_configure_pin_power(gpio->port, gpio->pin, io->voltage_level); 
+                  hw_gpio_configure_pin(gpio->port,gpio->pin, gpio->on.mode, gpio->on.function, gpio->on.high);
+                  hw_gpio_pad_latch_enable(gpio->port, gpio->pin);        
+               
+                 gpio++;
+
+        //同理，配置所有cs线的电源，方向，电平
+        gpio = (ad_io_conf_t*)io->spi_cs;
+        for (i = 0; i < io->cs_cnt; i++)  
+                if (AD_SPI_GPIO_VALID(gpio->port,gpio->pin)) 
+                        hw_gpio_configure_pin_power(gpio->port, gpio->pin, io->voltage_level);
+                        if (state == AD_IO_CONF_ON)  
+                                hw_gpio_configure_pin(gpio->port,gpio->pin, gpio->on.mode, gpio->on.function, gpio->on.high);
+                                hw_gpio_pad_latch_enable(gpio->port, gpio->pin);
+                         
+                        else 
+                                hw_gpio_configure_pin(gpio->port,gpio->pin, gpio->off.mode,  gpio->off.function, gpio->off.high);
+                                hw_gpio_pad_latch_disable(gpio->port, gpio->pin);                       
+                
+                gpio++;
+         
+        return AD_SPI_ERROR_NONE;
+ 
+
+---
+
+ //配置spi的驱动（频率,模式，相位等）
+参数：  spidata,  drv
+ad_spi_reconfig(handle,   *drv_conf)
+ 
+        ad_spi_data_t *spi = (ad_spi_data_t *) handle;  
+
+        OS_MUTEX_GET(spi->busy, OS_MUTEX_FOREVER);
+ 
+ 
+        if (spi->conf->drv->spi.rx_dma_channel != drv_conf->spi.rx_dma_channel) 
+                ASSERT_WARNING(0);
+                OS_MUTEX_PUT(spi->busy);
+                return AD_SPI_ERROR_CONFIG_DMA_CHANNEL_INVALID;
+       
+
+        if (spi->conf->drv->spi.tx_dma_channel != drv_conf->spi.tx_dma_channel)  
+                ASSERT_WARNING(0);
+                OS_MUTEX_PUT(spi->busy);
+                return AD_SPI_ERROR_CONFIG_DMA_CHANNEL_INVALID;
+         
+
+        if (spi->conf->drv->spi.smn_role != drv_conf->spi.smn_role)  
+                ASSERT_WARNING(0);
+                OS_MUTEX_PUT(spi->busy);
+                return AD_SPI_ERROR_CONFIG_SPI_ROLE_INVALID;
+         
+
+          //检查cs是否是已配置的    //待理解
+        if (spi->conf->drv->spi.smn_role == HW_SPI_MODE_MASTER)  
+                uint8_t cs_cnt = spi->conf->io->cs_cnt;
+                const ad_io_conf_t* cs_ports = spi->conf->io->spi_cs;
+                uint8 cs_configured = 0;
+                uint8_t i = 0;
+
+                for (i = 0; i< cs_cnt; i++) 
+                        cs_configured = ((cs_ports->port == drv_conf->spi.cs_pad.port) &&
+                                (cs_ports->pin == drv_conf->spi.cs_pad.pin));
+                        if (cs_configured )  
+                                break;
+                        
+                        cs_ports++;
+               
+                if (!cs_configured)  
+                        ASSERT_WARNING(0);
+                        OS_MUTEX_PUT(spi->busy);
+                        return AD_SPI_ERROR_CONFIG_SPI_CS_INVALID;
+ 
+        ////通过寄存器配置spi的频率,模式，相位
+        hw_spi_init(spi->conf->id, &drv_conf->spi);
+
+        OS_MUTEX_PUT(spi->busy);
+ 
+ ------------
+//通过寄存器配置spi的频率,模式，相位
+参数： HW_SPI1， drv->spi
+hw_spi_init( id,  *cfg)
+ 
+        SPI_Data *spid = SPIDATA(id);
+
+        hw_spi_init_clk_reg(id);
+
+        /* Workaround for "Errata issue 275": SPI needs proper reset sequence */
+        hw_spi_enable(id, false);
+        HW_SPI_REG_SETF(id, SPI_CTRL_REG, SPI_MINT, false);
+
+        HW_SPI_REG_SETF(id, SPI_CTRL_REG, SPI_WORD, cfg->word_mode);
+        HW_SPI_REG_SETF(id, SPI_CTRL_REG, SPI_SMN, cfg->smn_role);
+        HW_SPI_REG_SETF(id, SPI_CTRL_REG, SPI_POL, cfg->polarity_mode);
+        HW_SPI_REG_SETF(id, SPI_CTRL_REG, SPI_PHA, cfg->phase_mode);
+        HW_SPI_REG_SETF(id, SPI_CTRL_REG, SPI_CLK, cfg->xtal_freq);
+        ASSERT_WARNING((cfg->fifo_mode == HW_SPI_FIFO_RX_TX) ||
+                       (cfg->fifo_mode == HW_SPI_FIFO_NONE));
+        HW_SPI_REG_SETF(id, SPI_CTRL_REG, SPI_FIFO_MODE, cfg->fifo_mode);
+        HW_SPI_REG_SETF(id, SPI_CTRL_REG, SPI_DMA_TXREQ_MODE, 0);
+
+        // enable SPI block (if needed)
+        hw_spi_enable(id, cfg->disabled ? 0 : 1);
+
+        // set SPI CS pad
+        spid->cs_pad.port = cfg->cs_pad.port;
+        spid->cs_pad.pin = cfg->cs_pad.pin;
+ 
+        spid->use_dma = cfg->use_dma;
+        if (spid->use_dma)  
+                if (cfg->fifo_mode == HW_SPI_FIFO_NONE) 
+                        hw_spi_set_quick_dma_txreq(id);
+               
+                hw_spi_set_dma_channels(id, cfg->rx_dma_channel, HW_DMA_PRIO_2);
+ 
+        hw_spi_set_cs_ctrl(id, !cfg->ignore_cs);
+ 
+
+---------------
+
+ad_spi_write( handle,  *wbuf,  wlen)
+
+        ad_spi_data_t *spi = (ad_spi_data_t *) handle;
+
+         id = spi->conf->id;
+
+        //占用spi
+        OS_MUTEX_GET(spi->busy, OS_MUTEX_FOREVER);    
+
+        //检查spi是否busy
+        if (hw_spi_is_occupied(id))
+                OS_MUTEX_PUT(spi->busy);
+                return AD_SPI_ERROR_TRANSF_IN_PROGRESS;
+       
+        //spi读写交换，因第3个参数是NULL，所以这里只是写操作
+        hw_spi_writeread_buf(id, wbuf, NULL, wlen, ad_spi_wait_event, spi);   //这里的id实质是HW_SPI1
+
+        //等待spi读写结束
+        OS_EVENT_WAIT(spi->event, OS_EVENT_FOREVER);
+
+        //释放spi
+        OS_MUTEX_PUT(spi->busy);
+ 
+
+-----
+
+ad_spi_wait_event( void *p, uint16_t transferred)
+
+        ad_spi_data_t *spi = (ad_spi_data_t *) p;
+        OS_EVENT_SIGNAL_FROM_ISR(spi->event);
+
+
+
+==========定时器或引脚中断==传递消息调用上面的spi应用任务prvSPITask_MCP_4822=============
+
+
+//唤醒引脚中断入口程序
+wkup_cb( )
+        //清中断标志
+        hw_wkup_reset_interrupt();
+
+
+        //传递消息调用上面的spi应用任务prvSPITask_MCP_4822
+        OS_EVENT_SIGNAL_FROM_ISR(signal_MCP4822);
+
+
+---------------
+
+//唤醒引脚初始化  （忽略，跳过）
+wkup_init( )
+ 
+
+        // Initialize the WKUP controller   
+        hw_wkup_init(NULL);
+
+       //设置去抖时间为10ms
+       hw_wkup_set_debounce_time(10);
+
+       //注册定时器或引脚中断
+       hw_wkup_register_key_interrupt(wkup_cb, 1);
+
+       //设置唤醒电平
+       hw_wkup_configure_pin(KEY1_PORT, KEY1_PIN, 1, HW_WKUP_PIN_STATE_LOW);
+
+
+      //使能定时器或引脚中断
+      hw_wkup_enable_irq();
+
+
+
+
+
+
+
+
+
